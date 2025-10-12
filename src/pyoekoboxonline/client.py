@@ -89,7 +89,7 @@ class OekoboxClient:
 
         # Auto-detect base URL if not provided
         if base_url is None:
-            self.base_url = f"https://{shop_id}.oekobox-online.de"
+            self.base_url = f"https://oekobox-online.de/v3/shop/{shop_id}"
         else:
             self.base_url = base_url.rstrip("/")
 
@@ -228,18 +228,50 @@ class OekoboxClient:
     # Authentication methods
     async def login(self) -> UserInfo:
         """Login with username and password."""
-        data = await self._request(
-            "POST",
-            "/json/logon",
-            json_data={
-                "username": self.username,
-                "password": self.password,
-            },
-        )
+        try:
+            response = await self._client.get(
+                self._build_url("/logon"),
+                params={
+                    "cid": self.username,
+                    "pass": self.password,
+                },
+            )
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+            raise OekoboxConnectionError(f"Failed to connect to API: {e}") from e
 
-        # Extract session ID from response
-        if "sessionid" in data:
-            self.session_id = data["sessionid"]
+        # Handle HTTP errors
+        if response.status_code == 401:
+            raise OekoboxAuthenticationError(
+                "Authentication failed. Please check your credentials.",
+                status_code=response.status_code,
+            )
+        elif response.status_code >= 400:
+            raise OekoboxAPIError(
+                f"Login failed with status {response.status_code}",
+                status_code=response.status_code,
+            )
+
+        # Extract session ID from cookies
+        session_cookie = response.cookies.get("OOSESSION")
+        if session_cookie:
+            self.session_id = session_cookie
+        else:
+            raise OekoboxAuthenticationError(
+                "Login successful but no session ID received",
+                status_code=response.status_code,
+            )
+
+        # Parse response data
+        try:
+            data = response.json()
+        except Exception:
+            # If no JSON response, create minimal user info
+            data = {
+                "id": None,
+                "username": self.username,
+                "email": None,
+                "is_active": True,
+            }
 
         try:
             return UserInfo(**data)
@@ -249,13 +281,13 @@ class OekoboxClient:
     async def logout(self) -> None:
         """Logout and clear session."""
         if self.session_id:
-            await self._request("POST", "/json/logout")
+            await self._request("GET", "/logout")
             self.session_id = None
 
     # User and customer methods
     async def get_user_info(self) -> UserInfo:
         """Get current user information."""
-        data = await self._request("GET", "/json/user", require_auth=True)
+        data = await self._request("GET", "/api/user", require_auth=True)
         try:
             return UserInfo(**data)
         except ValidationError as exc:
@@ -263,7 +295,7 @@ class OekoboxClient:
 
     async def get_customer_info(self) -> CustomerInfo:
         """Get customer profile information."""
-        data = await self._request("GET", "/json/client/state", require_auth=True)
+        data = await self._request("GET", "/api/client/state", require_auth=True)
         try:
             return CustomerInfo(**data)
         except ValidationError as exc:
@@ -272,7 +304,7 @@ class OekoboxClient:
     # Product catalog methods
     async def get_groups(self) -> list[Group]:
         """Get product groups/categories."""
-        data = await self._request("GET", "/json/groups")
+        data = await self._request("GET", "/api/groups")
         try:
             if isinstance(data, list):
                 return [Group(**item) for item in data]
@@ -284,7 +316,7 @@ class OekoboxClient:
     async def get_subgroups(self, group_id: str | None = None) -> list[SubGroup]:
         """Get product subgroups."""
         params = {"group_id": group_id} if group_id else {}
-        data = await self._request("GET", "/json/subgroups", params=params)
+        data = await self._request("GET", "/api/subgroup", params=params)
         try:
             if isinstance(data, list):
                 return [SubGroup(**item) for item in data]
@@ -305,7 +337,7 @@ class OekoboxClient:
         if subgroup_id:
             params["subgroup_id"] = subgroup_id
 
-        data = await self._request("GET", "/json/items", params=params)
+        data = await self._request("GET", "/api/items", params=params)
         try:
             if isinstance(data, list):
                 return [Item(**item) for item in data]
@@ -316,7 +348,7 @@ class OekoboxClient:
 
     async def get_item(self, item_id: str) -> Item:
         """Get details for a specific item."""
-        data = await self._request("GET", "/json/item", params={"item_id": item_id})
+        data = await self._request("GET", "/api/item", params={"item_id": item_id})
         try:
             return Item(**data)
         except ValidationError as exc:
@@ -324,7 +356,7 @@ class OekoboxClient:
 
     async def search_items(self, query: str) -> list[Item]:
         """Search for items by name or description."""
-        data = await self._request("GET", "/json/search", params={"q": query})
+        data = await self._request("GET", "/api/search", params={"q": query})
         try:
             if isinstance(data, list):
                 return [Item(**item) for item in data]
@@ -336,7 +368,7 @@ class OekoboxClient:
     # Shopping cart methods
     async def get_cart(self) -> list[CartItem]:
         """Get current shopping cart contents."""
-        data = await self._request("GET", "/json/cart/show", require_auth=True)
+        data = await self._request("GET", "/api/cart/show", require_auth=True)
         try:
             if isinstance(data, list):
                 return [CartItem(**item) for item in data]
@@ -349,7 +381,7 @@ class OekoboxClient:
         """Add item to shopping cart."""
         await self._request(
             "POST",
-            "/json/cart/add",
+            "/api/cart/add",
             json_data={"item_id": item_id, "quantity": quantity},
             require_auth=True,
         )
@@ -358,19 +390,19 @@ class OekoboxClient:
         """Remove item from shopping cart."""
         await self._request(
             "POST",
-            "/json/cart/remove",
+            "/api/cart/remove",
             json_data={"item_id": item_id},
             require_auth=True,
         )
 
     async def clear_cart(self) -> None:
         """Clear all items from shopping cart."""
-        await self._request("POST", "/json/client/resetcart", require_auth=True)
+        await self._request("POST", "/api/client/resetcart", require_auth=True)
 
     # Order methods
     async def create_order(self) -> Order:
         """Create order from current cart."""
-        data = await self._request("POST", "/json/client/neworder", require_auth=True)
+        data = await self._request("POST", "/api/client/neworder", require_auth=True)
         try:
             return Order(**data)
         except ValidationError as exc:
@@ -378,7 +410,7 @@ class OekoboxClient:
 
     async def get_orders(self) -> list[Order]:
         """Get customer's orders."""
-        data = await self._request("GET", "/json/orders", require_auth=True)
+        data = await self._request("GET", "/api/orders", require_auth=True)
         try:
             if isinstance(data, list):
                 return [Order(**item) for item in data]
@@ -390,7 +422,7 @@ class OekoboxClient:
     async def get_order(self, order_id: str) -> Order:
         """Get specific order details."""
         data = await self._request(
-            "GET", "/json/order", params={"order_id": order_id}, require_auth=True
+            "GET", "/api/order", params={"order_id": order_id}, require_auth=True
         )
         try:
             return Order(**data)
@@ -400,7 +432,7 @@ class OekoboxClient:
     # Delivery methods
     async def get_delivery_dates(self) -> list[DDate]:
         """Get available delivery dates."""
-        data = await self._request("GET", "/json/dates")
+        data = await self._request("GET", "/api/dates")
         try:
             if isinstance(data, list):
                 return [DDate(**item) for item in data]
@@ -413,7 +445,7 @@ class OekoboxClient:
     async def get_subscriptions(self) -> list[Subscription]:
         """Get customer's active subscriptions."""
         data = await self._request(
-            "GET", "/json/client/subscriptions", require_auth=True
+            "GET", "/api/client/subscriptions", require_auth=True
         )
         try:
             if isinstance(data, list):
@@ -429,7 +461,7 @@ class OekoboxClient:
         """Add new subscription."""
         data = await self._request(
             "POST",
-            "/json/client/addsubscription",
+            "/api/client/addsubscription",
             json_data={
                 "items": [item.dict() for item in items],
                 "frequency": frequency,
@@ -444,7 +476,7 @@ class OekoboxClient:
     # Favorites methods
     async def get_favourites(self) -> list[Favourite]:
         """Get customer's favorite items."""
-        data = await self._request("GET", "/json/client/favourites", require_auth=True)
+        data = await self._request("GET", "/api/client/favourites", require_auth=True)
         try:
             if isinstance(data, list):
                 return [Favourite(**item) for item in data]
@@ -457,7 +489,7 @@ class OekoboxClient:
         """Add item to favorites."""
         await self._request(
             "POST",
-            "/json/client/addfavourites",
+            "/api/client/addfavourites",
             json_data={"item_id": item_id},
             require_auth=True,
         )
@@ -466,7 +498,7 @@ class OekoboxClient:
         """Remove item from favorites."""
         await self._request(
             "POST",
-            "/json/client/dropfavourites",
+            "/api/client/dropfavourites",
             json_data={"item_id": item_id},
             require_auth=True,
         )
