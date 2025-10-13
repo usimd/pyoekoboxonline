@@ -49,6 +49,5 @@ jobs:
       uses: codecov/codecov-action@v5
       if: matrix.python-version == '3.13'
       with:
-        file: ./coverage.xml
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}
