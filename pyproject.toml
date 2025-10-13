@@ -30,10 +30,10 @@ dependencies = [
   "pydantic>=2.10",
 ]
 
-urls."Bug Tracker" = "https://github.com/your-username/pyoekoboxonline/issues"
-urls.Documentation = "https://github.com/your-username/pyoekoboxonline#readme"
-urls.Homepage = "https://github.com/your-username/pyoekoboxonline"
-urls.Repository = "https://github.com/your-username/pyoekoboxonline"
+urls."Bug Tracker" = "https://github.com/usimd/pyoekoboxonline/issues"
+urls.Documentation = "https://github.com/usimd/pyoekoboxonline#readme"
+urls.Homepage = "https://github.com/usimd/pyoekoboxonline"
+urls.Repository = "https://github.com/usimd/pyoekoboxonline"
 
 [dependency-groups]
 dev = [
