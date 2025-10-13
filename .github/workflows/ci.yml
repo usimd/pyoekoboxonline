@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -14,8 +14,6 @@ jobs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
-      with:
-        version: "latest"
 
     - name: Set up Python
       run: uv python install
@@ -37,14 +35,12 @@ jobs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
-      with:
-        version: "latest"
 
     - name: Set up Python ${{ matrix.python-version }}
       run: uv python install ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: uv sync --dev
+      run: uv sync --all-groups
 
     - name: Run tests
       run: uv run pytest --cov=src --cov-report=xml --cov-report=html
