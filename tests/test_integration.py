@@ -194,11 +194,53 @@ class TestUserManagement:
 
     @pytest.mark.asyncio
     async def test_get_user_info(self, authenticated_client):
-        """Test getting user information."""
+        """Test getting user information with new API structure."""
         user_info = await authenticated_client.get_user_info()
 
         assert isinstance(user_info, UserInfo)
-        print(f"User info retrieved for: {user_info.username or 'Unknown'}")
+
+        # Test that we have at least basic information
+        assert user_info.username is not None or user_info.id is not None
+
+        # Test authentication state (should be AUTH after successful login)
+        if user_info.authentication_state:
+            assert user_info.authentication_state in [
+                "NONE",
+                "INVALID",
+                "VALID",
+                "AUTH",
+                "SUPER",
+                "ADMIN",
+            ]
+
+        # Test that is_active is properly set based on authentication state
+        if user_info.authentication_state in ["NONE", "INVALID"]:
+            assert user_info.is_active is False
+        else:
+            assert user_info.is_active is True
+
+        # Test role field if present (should be integer)
+        if user_info.role is not None:
+            assert isinstance(user_info.role, int)
+            assert user_info.role >= 0  # Role should be 0 or higher
+
+        # Test debug level if present
+        if user_info.debug_level is not None:
+            assert isinstance(user_info.debug_level, int)
+
+        # Print detailed information for debugging
+        print("User info retrieved:")
+        print(f"  Authentication State: {user_info.authentication_state}")
+        print(f"  User ID: {user_info.id}")
+        print(f"  Username: {user_info.username}")
+        print(f"  Email: {user_info.email}")
+        print(f"  Name: {user_info.first_name} {user_info.last_name}")
+        print(f"  Opener/Title: {user_info.opener}")
+        print(f"  Role: {user_info.role}")
+        print(f"  Active: {user_info.is_active}")
+        print(f"  Country: {user_info.country}")
+        print(f"  City: {user_info.city}")
+        print(f"  Phone: {user_info.phone}")
 
     @pytest.mark.asyncio
     async def test_get_customer_info(self, authenticated_client):

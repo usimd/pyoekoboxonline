@@ -90,13 +90,20 @@ class TestModels:
         assert address.longitude is None
 
     def test_user_info_model(self):
-        """Test UserInfo model creation."""
+        """Test UserInfo model creation with new structure."""
         user_data = {
             "id": "user_123",
             "username": "testuser",
             "email": "test@example.com",
             "first_name": "John",
             "last_name": "Doe",
+            "authentication_state": "AUTH",
+            "opener": "Herr",
+            "role": 0,
+            "debug_level": 1,
+            "phone": "+49123456789",
+            "country": "DE",
+            "city": "Berlin",
             "is_active": True,
             "pcgif_version": "1.0",
             "shop_version": "2.1",
@@ -107,6 +114,13 @@ class TestModels:
         assert user.email == "test@example.com"
         assert user.first_name == "John"
         assert user.last_name == "Doe"
+        assert user.authentication_state == "AUTH"
+        assert user.opener == "Herr"
+        assert user.role == 0
+        assert user.debug_level == 1
+        assert user.phone == "+49123456789"
+        assert user.country == "DE"
+        assert user.city == "Berlin"
         assert user.is_active is True
         assert user.pcgif_version == "1.0"
         assert user.shop_version == "2.1"
@@ -119,9 +133,100 @@ class TestModels:
         assert user.email is None
         assert user.first_name is None
         assert user.last_name is None
-        assert user.is_active is True
+        assert user.authentication_state is None
+        assert user.opener is None
+        assert user.role is None
+        assert user.debug_level is None
+        assert user.phone is None
+        assert user.country is None
+        assert user.city is None
+        assert user.is_active is True  # Default is True
         assert user.pcgif_version is None
         assert user.shop_version is None
+
+    def test_user_info_from_api_array_complete(self):
+        """Test UserInfo.from_api_array with complete data."""
+        # Based on scraped API documentation format
+        api_data = [
+            "AUTH",  # Position 1: authentication_state
+            12345,  # Position 2: id
+            "Herr",  # Position 3: opener
+            "Max",  # Position 4: first_name
+            "Mustermann",  # Position 5: last_name
+            0,  # Position 6: role (0=customer)
+            1,  # Position 7: debug_level
+            0,  # Position 8: driver_load
+            0,  # Position 9: driver_serve
+            0,  # Position 10: driver_next
+            0,  # Position 11: driver_next_load
+            0,  # Position 12: driver_tracking
+            1,  # Position 13: pref_asdc
+            "max@example.com",  # Position 14: email
+            "backup@example.com",  # Position 15: email1
+            "+49301234567",  # Position 16: phone
+            "+491701234567",  # Position 17: phone1
+            "DE",  # Position 18: country
+            "10115",  # Position 19: zip
+            "Berlin",  # Position 20: city
+            "Under den Linden 1",  # Position 21: street
+        ]
+
+        user = UserInfo.from_api_array(api_data)
+
+        assert user.authentication_state == "AUTH"
+        assert user.id == "12345"
+        assert user.opener == "Herr"
+        assert user.first_name == "Max"
+        assert user.last_name == "Mustermann"
+        assert user.role == 0
+        assert user.debug_level == 1
+        assert user.email == "max@example.com"
+        assert user.email1 == "backup@example.com"
+        assert user.phone == "+49301234567"
+        assert user.phone1 == "+491701234567"
+        assert user.country == "DE"
+        assert user.zip == "10115"
+        assert user.city == "Berlin"
+        assert user.street == "Under den Linden 1"
+        assert user.username == "max@example.com"  # Derived from email
+        assert user.is_active is True  # AUTH state means active
+
+    def test_user_info_from_api_array_minimal(self):
+        """Test UserInfo.from_api_array with minimal data."""
+        api_data = ["VALID", 42]  # Just auth state and ID
+
+        user = UserInfo.from_api_array(api_data)
+
+        assert user.authentication_state == "VALID"
+        assert user.id == "42"
+        assert user.first_name is None
+        assert user.email is None
+        assert user.username == "42"  # Derived from ID
+        assert user.is_active is True  # VALID state means active
+
+    def test_user_info_from_api_array_empty(self):
+        """Test UserInfo.from_api_array with empty data."""
+        user = UserInfo.from_api_array([])
+
+        assert user.authentication_state is None
+        assert user.id is None
+        assert user.username is None
+        assert user.is_active is True  # Default value
+
+    def test_user_info_authentication_states(self):
+        """Test different authentication states affect is_active."""
+        test_cases = [
+            (["NONE"], False),  # Not authenticated
+            (["INVALID"], False),  # Invalid cookie
+            (["VALID", 123], True),  # Valid but not logged in
+            (["AUTH", 456], True),  # Authenticated
+            (["SUPER", 789], True),  # Super user
+            (["ADMIN", 999], True),  # Administrator
+        ]
+
+        for api_data, expected_active in test_cases:
+            user = UserInfo.from_api_array(api_data)
+            assert user.is_active == expected_active
 
     def test_customer_info_model(self):
         """Test CustomerInfo model creation."""

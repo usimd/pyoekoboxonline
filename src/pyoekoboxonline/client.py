@@ -149,6 +149,7 @@ class OekoboxClient:
                 params=params,
                 data=data,
                 headers=headers,
+                cookies={"OOSESSION": self.session_id} if self.session_id else None,
                 **kwargs,
             )
 
@@ -305,6 +306,7 @@ class OekoboxClient:
             # Official API response format: {"action": "Logon", "result": "ok", ...}
             if isinstance(data, dict) and data.get("action") == "Logon":
                 if data.get("result") == "ok":
+                    # resp = await self._request("GET", f"{self.base_url}/bind1/{self.shop_id}")
                     # Create UserInfo from successful login
                     return UserInfo(
                         id=None,
@@ -327,11 +329,6 @@ class OekoboxClient:
         except Exception as e:
             raise OekoboxConnectionError(f"Failed to authenticate: {e}") from e
 
-    # Maintain backward compatibility
-    async def login(self) -> UserInfo:
-        """Login method for backward compatibility. Use logon() for new code."""
-        return await self.logon()
-
     async def logout(self) -> None:
         """Logout and clear session using official 'logout' method."""
         if self.session_id:
@@ -348,11 +345,52 @@ class OekoboxClient:
     # User and customer methods - Fixed to match official API
     async def get_user_info(self) -> UserInfo:
         """Get current user information."""
-        url = f"{self.api_base_url}/user"
+        url = f"{self.api_base_url}/user20"
         data = await self._request("GET", url)
         try:
-            return UserInfo(**data)
-        except ValidationError as exc:
+            # Based on scraped documentation, the API returns format:
+            # {"type":"UserInfo","version":4,"data":[
+            #    ["VALID",1,"Frau","Test","Tester",0,0,0,0]],
+            #    [0]
+            # ]}
+
+            user_info_data = None
+
+            if isinstance(data, list):
+                # Look for UserInfo object in the response array
+                for item in data:
+                    if isinstance(item, dict) and item.get("type") == "UserInfo":
+                        # Extract the data array from the UserInfo object
+                        raw_data = item.get("data", [])
+                        if raw_data and isinstance(raw_data, list):
+                            # Take the first row of user data (ignore version info)
+                            user_info_data = (
+                                raw_data[0]
+                                if len(raw_data) > 0 and isinstance(raw_data[0], list)
+                                else raw_data
+                            )
+                        break
+            elif isinstance(data, dict) and data.get("type") == "UserInfo":
+                raw_data = data.get("data", [])
+                if raw_data and isinstance(raw_data, list):
+                    user_info_data = (
+                        raw_data[0]
+                        if len(raw_data) > 0 and isinstance(raw_data[0], list)
+                        else raw_data
+                    )
+
+            # Parse the positional array using the updated from_api_array method
+            if user_info_data:
+                return UserInfo.from_api_array(user_info_data)
+            else:
+                # Fallback: create basic UserInfo with login credentials
+                return UserInfo(
+                    username=self.username,
+                    email=self.username if "@" in self.username else None,
+                    is_active=True,
+                )
+
+        except (ValidationError, IndexError, KeyError, TypeError) as exc:
             raise OekoboxValidationError(f"Invalid user data: {exc}") from exc
 
     async def get_customer_info(self) -> CustomerInfo:
