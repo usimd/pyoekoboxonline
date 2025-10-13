@@ -1,43 +1,75 @@
-"""Exception classes for the Ökobox Online API client."""
+"""Custom exceptions for the Ökobox Online API client."""
+
+from typing import Any
 
 
 class OekoboxError(Exception):
-    """Base exception for all Ökobox API related errors."""
+    """Base exception for all Ökobox Online API errors."""
 
     def __init__(self, message: str, status_code: int | None = None) -> None:
+        """Initialize the base exception.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code if applicable
+        """
         super().__init__(message)
         self.message = message
         self.status_code = status_code
 
 
 class OekoboxAPIError(OekoboxError):
-    """Raised when the API returns an error response."""
+    """Exception raised for API-level errors."""
 
     def __init__(
         self,
         message: str,
-        status_code: int,
-        response_data: dict[str, str | int] | None = None,
+        status_code: int | None = None,
+        response_data: dict[str, Any] | None = None,
     ) -> None:
+        """Initialize API error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code
+            response_data: Raw response data from API
+        """
         super().__init__(message, status_code)
         self.response_data = response_data or {}
 
 
+class OekoboxAuthenticationError(OekoboxError):
+    """Exception raised for authentication failures."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        """Initialize authentication error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code
+        """
+        super().__init__(message, status_code)
+
+
 class OekoboxConnectionError(OekoboxError):
-    """Raised when there's a connection error to the API."""
+    """Exception raised for connection and network errors."""
 
-    def __init__(self, message: str, original_error: Exception | None = None) -> None:
+    def __init__(self, message: str) -> None:
+        """Initialize connection error.
+
+        Args:
+            message: Error message
+        """
         super().__init__(message)
-        self.original_error = original_error
-
-
-class OekoboxAuthenticationError(OekoboxAPIError):
-    """Raised when authentication fails."""
-
-    pass
 
 
 class OekoboxValidationError(OekoboxError):
-    """Raised when request validation fails."""
+    """Exception raised for data validation errors."""
 
-    pass
+    def __init__(self, message: str) -> None:
+        """Initialize validation error.
+
+        Args:
+            message: Error message
+        """
+        super().__init__(message)
