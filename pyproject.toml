@@ -4,7 +4,7 @@ requires = [ "uv-build>=0.9.2,<0.10" ]
 
 [project]
 name = "pyoekoboxonline"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Python client for the Ökobox Online e-commerce API - food delivery and subscription services"
 readme = "README.md"
 keywords = [ "api", "client", "delivery", "ecommerce", "food", "oekobox", "subscription" ]

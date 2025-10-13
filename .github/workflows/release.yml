@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  release:
-    types: [ created ]
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   test:
@@ -26,8 +27,26 @@ jobs:
     - name: Run tests
       run: uv run pytest
 
-  publish-to-pypi:
+  create-release:
     needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Parse semantic version
+      id: semver
+      uses: LongOddCode/semantic-versioning-tag@0.7.0
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        prerelease: ${{ steps.semver.outputs.prerelease != '' }}
+        generate_release_notes: true
+
+  publish-to-pypi:
+    needs: [test, create-release]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
