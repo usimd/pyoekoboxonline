@@ -9,20 +9,18 @@ from pyoekoboxonline.exceptions import (
     OekoboxAPIError,
     OekoboxAuthenticationError,
     OekoboxConnectionError,
-    OekoboxValidationError,
 )
 from pyoekoboxonline.models import (
-    Group,
-    SubGroup,
-    Item,
-    Order,
-    UserInfo,
-    Shop,
-    ShopUrl,
-    Tour,
+    Address,
     DDate,
     Delivery,
-    Address,
+    Group,
+    Item,
+    Order,
+    ShopUrl,
+    SubGroup,
+    Tour,
+    UserInfo,
     XUnit,
 )
 
@@ -196,9 +194,7 @@ class TestOekoboxClient:
     async def test_logon_failure(self):
         """Test logon failure."""
         respx.get("https://oekobox-online.de/v3/shop/test_shop/api/logon").mock(
-            return_value=httpx.Response(
-                200, json={"result": "wrong_password"}
-            )
+            return_value=httpx.Response(200, json={"result": "wrong_password"})
         )
 
         async with OekoboxClient("test_shop", "testuser", "wrongpass") as client:
@@ -350,7 +346,7 @@ class TestOekoboxClient:
                     [2, "piece", "1", "S", 2, "1"],
                     [0],
                 ],
-            }
+            },
         ]
 
         respx.get("https://oekobox-online.de/v3/shop/test_shop/api/itemlist16").mock(
@@ -370,11 +366,15 @@ class TestOekoboxClient:
     async def test_add_to_cart(self):
         """Test adding item to cart."""
         respx.post("https://oekobox-online.de/v3/shop/test_shop/api/cart/add").mock(
-            return_value=httpx.Response(200, json={"result": "ok", "message": "Item added"})
+            return_value=httpx.Response(
+                200, json={"result": "ok", "message": "Item added"}
+            )
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            response = await client.add_to_cart(item_id=1, amount=2.0, note="Extra fresh")
+            response = await client.add_to_cart(
+                item_id=1, amount=2.0, note="Extra fresh"
+            )
             assert response["result"] == "ok"
 
     @pytest.mark.asyncio
@@ -382,7 +382,9 @@ class TestOekoboxClient:
     async def test_remove_from_cart(self):
         """Test removing item from cart."""
         respx.post("https://oekobox-online.de/v3/shop/test_shop/api/cart/remove").mock(
-            return_value=httpx.Response(200, json={"result": "ok", "message": "Item removed"})
+            return_value=httpx.Response(
+                200, json={"result": "ok", "message": "Item removed"}
+            )
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
@@ -442,15 +444,15 @@ class TestOekoboxClient:
     @respx.mock
     async def test_new_order(self):
         """Test creating new order."""
-        respx.post("https://oekobox-online.de/v3/shop/test_shop/api/client/neworder").mock(
-            return_value=httpx.Response(200, json={"result": "ok", "order_id": 123})
-        )
+        respx.post(
+            "https://oekobox-online.de/v3/shop/test_shop/api/client/neworder"
+        ).mock(return_value=httpx.Response(200, json={"result": "ok", "order_id": 123}))
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
             response = await client.new_order(
                 delivery_date="2024-01-20",
                 tour_id=1,
-                customer_note="Please deliver after 5pm"
+                customer_note="Please deliver after 5pm",
             )
             assert response["result"] == "ok"
             assert response["order_id"] == 123
@@ -463,7 +465,13 @@ class TestOekoboxClient:
             {
                 "type": "Tour",
                 "data": [
-                    [1, "Morning Route", "Early morning deliveries", "12345,12346", "Handle with care"],
+                    [
+                        1,
+                        "Morning Route",
+                        "Early morning deliveries",
+                        "12345,12346",
+                        "Handle with care",
+                    ],
                     [0],
                 ],
             },
@@ -477,7 +485,17 @@ class TestOekoboxClient:
             {
                 "type": "Delivery",
                 "data": [
-                    [1, 100, 0, "", 1, "Ring doorbell", "Use back entrance", "", "BOX001"],
+                    [
+                        1,
+                        100,
+                        0,
+                        "",
+                        1,
+                        "Ring doorbell",
+                        "Use back entrance",
+                        "",
+                        "BOX001",
+                    ],
                     [0],
                 ],
             },
@@ -487,7 +505,7 @@ class TestOekoboxClient:
                     [100, "", "Smith", "John", "123 Main St", "Berlin", "12345"],
                     [0],
                 ],
-            }
+            },
         ]
 
         respx.get("https://oekobox-online.de/v3/shop/test_shop/api/tour30/1").mock(
@@ -559,10 +577,38 @@ class TestOekoboxClient:
     @respx.mock
     async def test_find_shop(self):
         """Test finding shops by location."""
-        mock_response = [{ "type":"ShopUrl", "version":"4", "data":[
-            ["Organic Market Berlin", "http://example.com", "http://example.com", "http://example.com", "", "berlin", 0, 52.530008, 13.414954, 1],
-            ["Munich Organic", "http://example.com", "http://example.com", "http://example.com", "", "munich",0,  48.147154, 11.586124, 1]
-                           ]}]
+        mock_response = [
+            {
+                "type": "ShopUrl",
+                "version": "4",
+                "data": [
+                    [
+                        "Organic Market Berlin",
+                        "http://example.com",
+                        "http://example.com",
+                        "http://example.com",
+                        "",
+                        "berlin",
+                        0,
+                        52.530008,
+                        13.414954,
+                        1,
+                    ],
+                    [
+                        "Munich Organic",
+                        "http://example.com",
+                        "http://example.com",
+                        "http://example.com",
+                        "",
+                        "munich",
+                        0,
+                        48.147154,
+                        11.586124,
+                        1,
+                    ],
+                ],
+            }
+        ]
 
         respx.get("https://oekobox-online.de/v3/findshop").mock(
             return_value=httpx.Response(200, json=mock_response)

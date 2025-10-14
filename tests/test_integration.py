@@ -13,26 +13,23 @@ Note: These tests will make real API calls and may modify data (cart, favorites)
 Only run against test accounts or accounts where data modification is acceptable.
 """
 
+import contextlib
 import os
 
 import pytest
-import pytest_asyncio
 
 from pyoekoboxonline import OekoboxClient
 from pyoekoboxonline.exceptions import (
     OekoboxAPIError,
     OekoboxAuthenticationError,
-    OekoboxConnectionError,
     OekoboxValidationError,
 )
 from pyoekoboxonline.models import (
     Group,
     Item,
     Order,
-    UserInfo,
     SubGroup,
-    Tour,
-    ShopDate,
+    UserInfo,
 )
 
 # Import our configuration system
@@ -85,11 +82,9 @@ async def client():
         await client.logon()
         yield client
         # Logout after test
-        try:
-            await client.logout()
-        except Exception:
+        with contextlib.suppress(Exception):
             # Logout may fail if session is already expired
-            pass
+            await client.logout()
 
 
 class TestIntegrationAuthentication:
@@ -135,8 +130,8 @@ class TestIntegrationDataRetrieval:
         assert isinstance(groups, list)
         if groups:  # Only test if groups exist
             assert all(isinstance(group, Group) for group in groups)
-            assert all(hasattr(group, 'id') for group in groups)
-            assert all(hasattr(group, 'name') for group in groups)
+            assert all(hasattr(group, "id") for group in groups)
+            assert all(hasattr(group, "name") for group in groups)
 
     @pytest.mark.asyncio
     async def test_get_subgroups(self, client):
@@ -155,9 +150,9 @@ class TestIntegrationDataRetrieval:
             assert all(isinstance(item, Item) for item in items)
             # Test that items have required fields
             sample_item = items[0]
-            assert hasattr(sample_item, 'id')
-            assert hasattr(sample_item, 'name')
-            assert hasattr(sample_item, 'price')
+            assert hasattr(sample_item, "id")
+            assert hasattr(sample_item, "name")
+            assert hasattr(sample_item, "price")
 
     @pytest.mark.asyncio
     async def test_get_user_info(self, client):
@@ -212,9 +207,7 @@ class TestIntegrationCartOperations:
         await client.reset_cart()
 
         # Add item to cart
-        add_response = await client.add_to_cart(
-            item_id=test_item.id, amount=1.0
-        )
+        add_response = await client.add_to_cart(item_id=test_item.id, amount=1.0)
         assert "result" in add_response
 
         # Show cart contents
@@ -277,8 +270,6 @@ class TestIntegrationDataIntegrity:
 
         if not groups or not items:
             pytest.skip("Insufficient data for consistency testing")
-
-        group_ids = {group.id for group in groups if group.id is not None}
 
         # Check that items reference existing groups
         for item in items[:10]:  # Test first 10 items to avoid long runtime

@@ -11,13 +11,11 @@ import pytest
 from pyoekoboxonline.models import (
     MODEL_REGISTRY,
     Address,
-    CartItem,
     DataListModel,
     DataListResponse,
     Group,
     Item,
     Order,
-    Subscription,
     UserInfo,
     XUnit,
     parse_data_list_response,
@@ -127,14 +125,71 @@ class TestSpecificModels:
     def test_item_model_creation(self):
         """Test Item model creation from data list entry."""
         data = [
-            1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0, 0, 0.25, "S",
-            "0", "2.30", "hash123", "1", 1, 1, "2024-01-01", "2024-01-31",
-            "2024-01-01", "2024-01-31", "0", 1, 0, 1, "apple fruit", "kg",
-            "hash456", "Test Pack", "Organic", "Local Farm", 1, 1.0, 5.0, 1.0,
-            0.5, 3, 2.0, "bio,organic", 1, 1, 1, 0, "Delicious", 1, "piece",
-            0, "EU:Organic", 0, "Class I", 1, 1, 2.5, 1.2, 90, "500g pack",
-            2.0, 2.0, "2.00", 0, "2024-12-31", "Apple Brand", "EAN123456",
-            "Producer Name", 0, "Brand Name"
+            1,
+            "Apple",
+            2.50,
+            "kg",
+            "Fresh red apples",
+            1,
+            7.0,
+            0,
+            0.25,
+            "S",
+            "0",
+            "2.30",
+            "hash123",
+            "1",
+            1,
+            1,
+            "2024-01-01",
+            "2024-01-31",
+            "2024-01-01",
+            "2024-01-31",
+            "0",
+            1,
+            0,
+            1,
+            "apple fruit",
+            "kg",
+            "hash456",
+            "Test Pack",
+            "Organic",
+            "Local Farm",
+            1,
+            1.0,
+            5.0,
+            1.0,
+            0.5,
+            3,
+            2.0,
+            "bio,organic",
+            1,
+            1,
+            1,
+            0,
+            "Delicious",
+            1,
+            "piece",
+            0,
+            "EU:Organic",
+            0,
+            "Class I",
+            1,
+            1,
+            2.5,
+            1.2,
+            90,
+            "500g pack",
+            2.0,
+            2.0,
+            "2.00",
+            0,
+            "2024-12-31",
+            "Apple Brand",
+            "EAN123456",
+            "Producer Name",
+            0,
+            "Brand Name",
         ]
 
         item = Item.from_data_list_entry(data)
@@ -159,8 +214,25 @@ class TestSpecificModels:
 
     def test_order_model_creation(self):
         """Test Order model creation from data list entry."""
-        data = [123, "2024-01-15", "0", 1, "Customer note", "Delivery note",
-                "14:00", "2024-01-14T10:00:00", 1, 5.0, 0, 1, 100, "CODE123", 1, 456, 125.50]
+        data = [
+            123,
+            "2024-01-15",
+            "0",
+            1,
+            "Customer note",
+            "Delivery note",
+            "14:00",
+            "2024-01-14T10:00:00",
+            1,
+            5.0,
+            0,
+            1,
+            100,
+            "CODE123",
+            1,
+            456,
+            125.50,
+        ]
 
         order = Order.from_data_list_entry(data)
 
@@ -173,9 +245,24 @@ class TestSpecificModels:
 
     def test_address_model_creation(self):
         """Test Address model creation from data list entry."""
-        data = [100, "home", "Smith", "John", "123 Main St", "Berlin", "12345",
-                "12345", 52.5200, 13.4050, 95, "+49301234567", "+49151234567",
-                "Ring doorbell", "Use main entrance", "Handle with care"]
+        data = [
+            100,
+            "home",
+            "Smith",
+            "John",
+            "123 Main St",
+            "Berlin",
+            "12345",
+            "12345",
+            52.5200,
+            13.4050,
+            95,
+            "+49301234567",
+            "+49151234567",
+            "Ring doorbell",
+            "Use main entrance",
+            "Handle with care",
+        ]
 
         address = Address.from_data_list_entry(data)
 
@@ -189,13 +276,67 @@ class TestSpecificModels:
 
     def test_userinfo_model_creation(self):
         """Test UserInfo model creation from data list entry."""
-        data = ["AUTH", 123, "Dear", "John", "Smith", "0", "0", "0", "0", 0,
-                "0", "1", "1", "john@example.com", 0, "+49301234567", "+49151234567",
-                "DE", "12345", "Berlin", "Main St 123", 1234567890, 1, "Customer note",
-                "123", "SEPA123", "Jane Smith", "54321", "Munich", "Other St 456",
-                "ACME Corp", 0, "Garage", 0, 0, "IT", "DE123456789", "ACME Delivery",
-                "Shipping", "Handle with care", 150.0, 0, 0, 1000.0, 0, "DEUTDEFF",
-                1, 2, "2024-12-31", 1, 1, 1, 1, 1, 1, 1, 1, 0, 1]
+        data = [
+            "AUTH",
+            123,
+            "Dear",
+            "John",
+            "Smith",
+            "0",
+            "0",
+            "0",
+            "0",
+            0,
+            "0",
+            "1",
+            "1",
+            "john@example.com",
+            0,
+            "+49301234567",
+            "+49151234567",
+            "DE",
+            "12345",
+            "Berlin",
+            "Main St 123",
+            1234567890,
+            1,
+            "Customer note",
+            "123",
+            "SEPA123",
+            "Jane Smith",
+            "54321",
+            "Munich",
+            "Other St 456",
+            "ACME Corp",
+            0,
+            "Garage",
+            0,
+            0,
+            "IT",
+            "DE123456789",
+            "ACME Delivery",
+            "Shipping",
+            "Handle with care",
+            150.0,
+            0,
+            0,
+            1000.0,
+            0,
+            "DEUTDEFF",
+            1,
+            2,
+            "2024-12-31",
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            0,
+            1,
+        ]
 
         user_info = UserInfo.from_data_list_entry(data)
 
@@ -260,7 +401,7 @@ class TestParseDataListResponse:
                     [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0],
                     [0],
                 ],
-            }
+            },
         ]
 
         result = parse_data_list_response(response_data)
@@ -304,7 +445,7 @@ class TestParseDataListResponse:
                     "malformed_data_entry",
                     [0],
                 ],
-            }
+            },
         ]
 
         result = parse_data_list_response(response_data)
@@ -314,20 +455,28 @@ class TestParseDataListResponse:
     def test_model_registry_completeness(self):
         """Test that MODEL_REGISTRY contains expected models."""
         expected_models = [
-            "Address", "Item", "Group", "Order", "UserInfo", "XUnit",
-            "Tour", "DDate", "Delivery", "Subscription", "CartItem"
+            "Address",
+            "Item",
+            "Group",
+            "Order",
+            "UserInfo",
+            "XUnit",
+            "Tour",
+            "DDate",
+            "Delivery",
+            "Subscription",
+            "CartItem",
         ]
 
         for model_name in expected_models:
-            assert model_name in MODEL_REGISTRY, f"Missing {model_name} in MODEL_REGISTRY"
+            assert model_name in MODEL_REGISTRY, (
+                f"Missing {model_name} in MODEL_REGISTRY"
+            )
 
     def test_datalist_response_structure(self):
         """Test DataListResponse structure."""
         response = DataListResponse(
-            type="Group",
-            version=1,
-            cnt=2,
-            data=[[1, "Test"], [2, "Another"]]
+            type="Group", version=1, cnt=2, data=[[1, "Test"], [2, "Another"]]
         )
 
         assert response.type == "Group"
