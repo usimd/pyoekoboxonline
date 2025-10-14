@@ -2,12 +2,9 @@
 
 import logging
 import re
-from contextlib import suppress
-from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import httpx
-from pydantic import ValidationError
 
 from .exceptions import (
     OekoboxAPIError,
@@ -16,17 +13,26 @@ from .exceptions import (
     OekoboxValidationError,
 )
 from .models import (
+    parse_data_list_response,
+    Address,
+    Assorted,
+    Assortment,
+    Box,
     CartItem,
     CustomerInfo,
     DDate,
+    Delivery,
     Favourite,
     Group,
     Item,
     Order,
+    Position,
     Shop,
     SubGroup,
     Subscription,
+    Tour,
     UserInfo,
+    ShopDate, Pause, AuxDate, DeselectedItem, DeselectedGroup, XUnit, DeliveryState, ShopUrl,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,7 +127,7 @@ class OekoboxClient:
         params: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any]|List[Dict[str, Any]]:
         """Make an HTTP request with proper session management.
 
         According to official API docs, sessions can be maintained via:
@@ -208,796 +214,650 @@ class OekoboxClient:
                 ) from e
 
         except httpx.RequestError as e:
-            raise OekoboxConnectionError(f"Connection error: {e}") from e
+            raise OekoboxConnectionError(f"Request failed: {e}") from e
 
-        # Parse response - handle both JSON and non-JSON responses
+        # Parse JSON response
         try:
-            data = response.json()
-        except Exception as err:
-            # If not JSON, try to create a basic success response
-            if response.status_code == 200:
-                data = {"result": "ok", "response_text": response.text}
-            else:
-                raise OekoboxAPIError(
-                    f"Invalid response: {response.text}", response.status_code
-                ) from err
-
-        # Check for API-level errors in official response format
-        if isinstance(data, dict) and "result" in data and data["result"] != "ok":
-            result = data["result"]
-
-            # Map official error codes to our exceptions
-            if result in [
-                "no_such_user",
-                "wrong_password",
-                "blocked",
-                "duplicate_user",
-            ]:
-                raise OekoboxAuthenticationError(
-                    f"Authentication failed: {result}", response.status_code
-                )
-            elif result in ["empty", "no_data"]:
-                raise OekoboxValidationError(f"Validation error: {result}")
-            else:
-                raise OekoboxAPIError(f"API error: {result}", response.status_code)
-
-        return data
-
-    @staticmethod
-    async def get_available_shops() -> list[Shop]:
-        """Get list of available shops with geographical information."""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    "https://oekobox-online.eu/v3/shoplist.js.jsp"
-                )
-                content = response.text
-
-                shops = []
-                # Parse the JavaScript array format
-                for line in content.strip().split("\n"):
-                    line = line.strip().rstrip(",")
-                    if line.startswith("[") and line.endswith("]"):
-                        try:
-                            # Parse the array: [lat, lng, "name", lat2, lng2, "shop_id"]
-                            match = re.match(
-                                r'\[([-\d.]+),([-\d.]+),"([^"]+)",([-\d.]+),([-\d.]+),"([^"]+)"\]',
-                                line,
-                            )
-                            if match:
-                                lat, lng, name, lat2, lng2, shop_id = match.groups()
-
-                                # Skip entries with invalid coordinates
-                                if lat == "-1" or lng == "-1":
-                                    lat, lng = lat2, lng2
-
-                                shop = Shop(
-                                    id=shop_id,
-                                    name=name,
-                                    latitude=float(lat),
-                                    longitude=float(lng),
-                                    delivery_lat=float(lat2) if lat2 != "-1" else None,
-                                    delivery_lng=float(lng2) if lng2 != "-1" else None,
-                                )
-                                shops.append(shop)
-                        except (ValueError, AttributeError):
-                            continue
-
-                return shops
-
-            except Exception as e:
-                raise OekoboxConnectionError(f"Failed to fetch shop list: {e}") from e
-
-    # Authentication methods - Fixed to match official API specification
-    async def logon(self) -> UserInfo:
-        """Authenticate with username and password using official 'logon' method.
-
-        Official API endpoint: <urlbase>/api/logon?cid=<userid>&pass=<password>
-        """
-        url = f"{self.api_base_url}/logon"
-        params = {
-            "cid": self.username,  # Official API uses 'cid' for customer ID
-            "pass": self.password,
-        }
-
-        try:
-            data = await self._request("GET", url, params=params)
-
-            # Official API response format: {"action": "Logon", "result": "ok", ...}
-            if isinstance(data, dict) and data.get("action") == "Logon":
-                if data.get("result") == "ok":
-                    # resp = await self._request("GET", f"{self.base_url}/bind1/{self.shop_id}")
-                    # Create UserInfo from successful login
-                    return UserInfo(
-                        id=None,
-                        username=self.username,
-                        email=self.username if "@" in self.username else None,
-                        is_active=True,
-                        pcgif_version=data.get("pcgifversion"),
-                        shop_version=data.get("shopversion"),
-                    )
-                else:
-                    # Handle specific error results from official API
-                    result = data.get("result", "unknown_error")
-                    raise OekoboxAuthenticationError(f"Login failed: {result}")
-
-            # Fallback for unexpected response format
-            return UserInfo(id=None, username=self.username, email=None, is_active=True)
-
-        except OekoboxAuthenticationError:
-            raise
+            return response.json()
         except Exception as e:
-            raise OekoboxConnectionError(f"Failed to authenticate: {e}") from e
+            raise OekoboxValidationError(f"Invalid JSON response: {e}") from e
 
-    async def logout(self) -> None:
-        """Logout and clear session using official 'logout' method."""
-        if self.session_id:
-            try:
-                url = f"{self.api_base_url}/logout"
-                await self._request("GET", url)
-            except Exception:
-                # Continue even if logout request fails
-                # Using pass here is acceptable for cleanup operations
-                pass  # nosec B110
-            finally:
-                self.session_id = None
+    async def _api_request(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Make an API request and handle DataList responses."""
+        url = f"{self.api_base_url}/{endpoint.lstrip('/')}"
+        response_data = await self._request(method, url, params, data, **kwargs)
 
-    # User and customer methods - Fixed to match official API
-    async def get_user_info(self) -> UserInfo:
-        """Get current user information."""
-        url = f"{self.api_base_url}/user20"
-        data = await self._request("GET", url)
-        try:
-            # Based on scraped documentation, the API returns format:
-            # {"type":"UserInfo","version":4,"data":[
-            #    ["VALID",1,"Frau","Test","Tester",0,0,0,0]],
-            #    [0]
-            # ]}
+        # Handle DataList responses
+        if isinstance(response_data, list):
+            return parse_data_list_response(response_data)
 
-            user_info_data = None
+        return response_data
 
-            if isinstance(data, list):
-                # Look for UserInfo object in the response array
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "UserInfo":
-                        # Extract the data array from the UserInfo object
-                        raw_data = item.get("data", [])
-                        if raw_data and isinstance(raw_data, list):
-                            # Take the first row of user data (ignore version info)
-                            user_info_data = (
-                                raw_data[0]
-                                if len(raw_data) > 0 and isinstance(raw_data[0], list)
-                                else raw_data
-                            )
-                        break
-            elif isinstance(data, dict) and data.get("type") == "UserInfo":
-                raw_data = data.get("data", [])
-                if raw_data and isinstance(raw_data, list):
-                    user_info_data = (
-                        raw_data[0]
-                        if len(raw_data) > 0 and isinstance(raw_data[0], list)
-                        else raw_data
-                    )
-
-            # Parse the positional array using the updated from_api_array method
-            if user_info_data:
-                return UserInfo.from_api_array(user_info_data)
-            else:
-                # Fallback: create basic UserInfo with login credentials
-                return UserInfo(
-                    username=self.username,
-                    email=self.username if "@" in self.username else None,
-                    is_active=True,
-                )
-
-        except (ValidationError, IndexError, KeyError, TypeError) as exc:
-            raise OekoboxValidationError(f"Invalid user data: {exc}") from exc
-
-    async def get_customer_info(self) -> CustomerInfo:
-        """Get customer profile information.
-
-        Note: The API doesn't have a direct customer info endpoint.
-        Customer information is typically retrieved via the dates1 endpoint.
-        For now, return a basic CustomerInfo object.
+    # Authentication Methods
+    async def logon(self, guest: bool = False) -> dict[str, Any]:
         """
-        # The official API doesn't have a direct /client endpoint for customer info
-        # Customer info is retrieved via /dates1 endpoint which includes user context
-        return CustomerInfo(
-            id=self.username,
-            user_info=UserInfo(
-                username=self.username,
-                email=self.username if "@" in self.username else None,
-                is_active=True,
-            ),
-        )
+        Authenticate with the API using username and password.
 
-    # Product catalog methods - Fixed to match API documentation
-    async def get_groups(self) -> list[Group]:
-        """Get product groups/categories using the correct API endpoint."""
-        # According to API documentation: <baseurl>/api/groups2
-        url = f"{self.api_base_url}/groups2"
-        data = await self._request("GET", url)
+        Args:
+            guest: If True, login as guest without credentials
 
-        try:
-            # Handle the documented response format: [{type:"Group", data:[[id,name,info,count]...]}]
-            if isinstance(data, list) and len(data) > 0:
-                groups = []
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "Group":
-                        group_data = item.get("data", [])
-                        for group_row in group_data:
-                            if (
-                                len(group_row) >= 4 and group_row[0] != 0
-                            ):  # Skip special entries
-                                groups.append(
-                                    Group(
-                                        id=str(group_row[0]),
-                                        name=group_row[1],
-                                        info=group_row[2] if group_row[2] else None,
-                                        count=group_row[3],
-                                    )
-                                )
-                return groups
-            elif isinstance(data, list):
-                return [Group(**item) for item in data]
-            elif isinstance(data, dict) and "groups" in data:
-                return [Group(**item) for item in data["groups"]]
-            else:
-                return []
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid group data: {exc}") from exc
+        Returns:
+            Logon response with session information
 
-    async def get_subgroups(self, group_id: str | None = None) -> list[SubGroup]:
-        """Get product subgroups using the correct API endpoint."""
-        # Based on groups endpoint, subgroups are included in the same response
-        url = f"{self.api_base_url}/groups2"
-        data = await self._request("GET", url)
+        Raises:
+            OekoboxAuthenticationError: If authentication fails
+        """
+        params = {}
+        if guest:
+            params["guest"] = "true"
+        else:
+            params["cid"] = self.username
+            params["pass"] = self.password
 
-        try:
-            # Handle the documented response format for subgroups
-            if isinstance(data, list) and len(data) > 1:
-                subgroups = []
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "SubGroup":
-                        subgroup_data = item.get("data", [])
-                        for subgroup_row in subgroup_data:
-                            if (len(subgroup_row) >= 4 and subgroup_row[0] != 0) and (
-                                group_id is None or str(subgroup_row[2]) == group_id
-                            ):  # Skip special entries and filter by group_id
-                                subgroups.append(
-                                    SubGroup(
-                                        id=str(subgroup_row[0]),
-                                        name=subgroup_row[1],
-                                        parent_id=str(subgroup_row[2]),
-                                        count=subgroup_row[3],
-                                    )
-                                )
-                return subgroups
-            elif isinstance(data, list):
-                return [SubGroup(**item) for item in data]
-            elif isinstance(data, dict) and "subgroups" in data:
-                return [SubGroup(**item) for item in data["subgroups"]]
-            else:
-                return []
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid subgroup data: {exc}") from exc
+        response = await self._request("GET", f"{self.api_base_url}/logon", params=params)
+
+        # Check logon result
+        result = response.get("result")
+        if result not in ["ok", "relogon", "guest"]:
+            error_messages = {
+                "no_data": "No authentication data provided",
+                "empty": "Shop not loaded with data",
+                "no_such_user": "User cannot be identified",
+                "duplicate_user": "Email exists multiple times, access denied",
+                "wrong_password": "Wrong password",
+                "blocked": "User account temporarily blocked",
+                "tblocked": "IP address temporarily blocked",
+                "token_too_old": "Logon token too old",
+                "wrong_token": "Token wrong",
+                "use_id": "Use customer ID instead of email",
+                "token_session": "Token not created by this session",
+            }
+            error_msg = error_messages.get(result, f"Logon failed: {result}")
+            raise OekoboxAuthenticationError(error_msg)
+
+        logger.info(f"Successfully logged in with result: {result}")
+        return response
+
+    async def logout(self) -> dict[str, Any]:
+        """
+        Logout and end the current session.
+
+        Returns:
+            Logout response
+        """
+        response = await self._request("GET", f"{self.api_base_url}/logout")
+        self.session_id = None
+        logger.info("Successfully logged out")
+        return response
+
+    # Core Data Methods
+    async def get_groups(self) -> List[Group]:
+        """
+        Get all product groups/categories.
+
+        Returns:
+            List of Group objects
+        """
+        return await self._api_request("groups")
+
+    async def get_subgroups(self, group_id: Optional[int] = None) -> List[SubGroup]:
+        """
+        Get subgroups, optionally filtered by parent group.
+
+        Args:
+            group_id: Optional parent group ID to filter by
+
+        Returns:
+            List of SubGroup objects
+        """
+        params = {}
+        if group_id is not None:
+            params["g"] = group_id
+        return await self._api_request("subgroup", params=params)
 
     async def get_items(
         self,
-        group_id: str | None = None,
-        subgroup_id: str | None = None,
-    ) -> list[Item]:
-        """Get available items/products using the correct API endpoint."""
-        # According to API documentation example: <urlbase>/api/items1/-1&hidden=1&timeless=1
-        # The group_id should be part of the URL path, not a parameter
-        if group_id:
-            url = f"{self.api_base_url}/items1/{group_id}"
-        else:
-            url = f"{self.api_base_url}/items1/-1"  # -1 means all groups
+        group_id: Optional[int] = None,
+        subgroup_id: Optional[int] = None,
+        rubric_id: Optional[int] = None,
+        search: Optional[str] = None,
+        hidden: bool = False,
+        timeless: bool = False,
+    ) -> List[Item]:
+        """
+        Get items with optional filtering.
 
+        Args:
+            group_id: Filter by group ID
+            subgroup_id: Filter by subgroup ID
+            rubric_id: Filter by rubric ID
+            search: Search term
+            hidden: Include hidden items
+            timeless: Include timeless items
+
+        Returns:
+            List of Item objects
+        """
         params = {}
-        if subgroup_id:
-            params["subgroup"] = subgroup_id
+        if group_id is not None:
+            params["g"] = group_id
+        if subgroup_id is not None:
+            params["sg"] = subgroup_id
+        if rubric_id is not None:
+            params["r"] = rubric_id
+        if search:
+            params["s"] = search
+        if hidden:
+            params["hidden"] = "1"
+        if timeless:
+            params["timeless"] = "1"
 
-        data = await self._request("GET", url, params=params)
-        try:
-            # Handle the documented response format similar to groups
-            if isinstance(data, list) and len(data) > 0:
-                items = []
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "Item":
-                        item_data = item.get("data", [])
-                        for item_row in item_data:
-                            if (
-                                len(item_row) >= 4 and item_row[0] != 0
-                            ):  # Skip terminating entries
-                                items.append(
-                                    Item(
-                                        id=str(item_row[0]),
-                                        name=item_row[1],
-                                        price=float(item_row[2])
-                                        if item_row[2]
-                                        else None,
-                                        description=item_row[4]
-                                        if len(item_row) > 4
-                                        else None,
-                                        group_id=str(item_row[5])
-                                        if len(item_row) > 5
-                                        else None,
-                                    )
-                                )
-                return items
-            elif isinstance(data, list):
-                return [Item(**item) for item in data]
-            elif isinstance(data, dict) and "items" in data:
-                return [Item(**item) for item in data["items"]]
-            else:
-                return []
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid item data: {exc}") from exc
+        return await self._api_request("items", params=params)
 
-    # Delivery methods - Fixed to match official API
-    async def get_delivery_dates(self) -> list[DDate]:
-        """Get available delivery dates using the correct API endpoint."""
-        # According to API documentation: <baseurl>/dates1 but may need authentication
-        # Try API endpoint first, then fallback to base URL
-        try:
-            url = f"{self.api_base_url}/dates1"
-            data = await self._request("GET", url)
-        except OekoboxAPIError as e:
-            if e.status_code == 404:
-                # Fallback to base URL endpoint
-                url = f"{self.base_url}/dates1"
-                data = await self._request("GET", url)
-            else:
-                raise
+    async def get_item(self, item_id: int) -> List[Item]:
+        """
+        Get specific item by ID.
 
-        try:
-            # Handle the documented response format: ShopDate objects in array format
-            dates: list[DDate] = []
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "ShopDate":
-                        date_data = item.get("data", [])
-                        for date_row in date_data:
-                            if (
-                                len(date_row) >= 3 and date_row[0] != 0 and date_row[2]
-                            ):  # Skip terminating entries and entries without dates
-                                # Parse the date string from the API response
-                                try:
-                                    date_obj = datetime.fromisoformat(
-                                        date_row[2].replace("Z", "+00:00")
-                                    )
-                                    dates.append(
-                                        DDate(
-                                            date=date_obj,
-                                            is_available=True,  # Assume available if returned
-                                            delivery_slots=[],
-                                        )
-                                    )
-                                except (ValueError, IndexError):
-                                    continue
-            return dates
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid delivery date data: {exc}") from exc
+        Args:
+            item_id: Item ID to retrieve
 
-    # Subscription methods - Updated to handle potential 404s gracefully
-    async def get_subscriptions(self) -> list[Subscription]:
-        """Get customer's active subscriptions."""
-        # According to the API documentation, subscriptions are also available via the dates1 endpoint
-        # But try the direct endpoint first
-        try:
-            url = f"{self.api_base_url}/client/subscriptions"
-            data = await self._request("GET", url)
-        except OekoboxAPIError as e:
-            if e.status_code == 404:
-                # Try to get subscriptions from dates1 endpoint
-                try:
-                    dates_url = f"{self.base_url}/dates1"
-                    dates_data = await self._request("GET", dates_url)
+        Returns:
+            List containing the Item object
+        """
+        return await self._api_request(f"item/{item_id}")
 
-                    # Extract subscriptions from dates response
-                    subscriptions: list[Subscription] = []
-                    if isinstance(dates_data, list):
-                        for item in dates_data:
-                            if (
-                                isinstance(item, dict)
-                                and item.get("type") == "Subscription"
-                            ):
-                                subscription_data = item.get("data", [])
-                                for sub_row in subscription_data:
-                                    if len(sub_row) >= 4 and sub_row[0] != 0:
-                                        subscriptions.append(
-                                            Subscription(
-                                                id=str(sub_row[0]),
-                                                customer_id=self.username,
-                                                frequency=sub_row[2]
-                                                if len(sub_row) > 2
-                                                else None,
-                                                is_active=True,
-                                            )
-                                        )
-                    return subscriptions
-                except Exception:
-                    # If dates1 also fails, return empty list
-                    return []
-            else:
-                raise
+    async def get_itemlist(self, item_ids: List[int], tour_id: int|None=None, order_id: int|None=None) -> List[Item|XUnit]:
+        """
+        This method allows to obtain the information for a set of items, provided as argument.
 
-        try:
-            if isinstance(data, list):
-                return [Subscription(**item) for item in data]
-            else:
-                return [Subscription(**item) for item in data.get("subscriptions", [])]
-        except ValidationError as exc:
-            raise OekoboxValidationError(f"Invalid subscription data: {exc}") from exc
+        It's an alternative to the item call, that only provides data for a single item.
 
-    # Favorites methods - Updated to handle potential 404s gracefully
-    async def get_favourites(self) -> list[Favourite]:
-        """Get customer's favorite items."""
-        # According to the API documentation, favourites are also available via the dates1 endpoint
-        try:
-            url = f"{self.api_base_url}/client/favourites"
-            data = await self._request("GET", url)
-        except OekoboxAPIError as e:
-            if e.status_code == 404:
-                # Try to get favourites from dates1 endpoint
-                try:
-                    dates_url = f"{self.base_url}/dates1"
-                    dates_data = await self._request("GET", dates_url)
+        Args:
+            item_ids: List of item IDs to retrieve
 
-                    # Extract favourites from dates response
-                    favourites: list[Favourite] = []
-                    if isinstance(dates_data, list):
-                        for item in dates_data:
-                            if (
-                                isinstance(item, dict)
-                                and item.get("type") == "Favourite"
-                            ):
-                                favourite_data = item.get("data", [])
-                                for fav_row in favourite_data:
-                                    if len(fav_row) >= 2 and fav_row[0] == "Item":
-                                        favourites.append(
-                                            Favourite(
-                                                customer_id=self.username,
-                                                item_id=str(fav_row[1]),
-                                            )
-                                        )
-                    return favourites
-                except Exception:
-                    # If dates1 also fails, return empty list
-                    return []
-            else:
-                raise
+        Returns:
+            List of Item objects
+        """
+        ids_param = ",".join(map(str, item_ids))
+        params: dict[str, Any] = {"i": ids_param}
+        if tour_id is not None:
+            params["tourid"] = tour_id
+        if order_id is not None:
+            params["oid"] = order_id
+        return await self._api_request("itemlist16", params=params)
 
-        try:
-            if isinstance(data, list):
-                return [Favourite(**item) for item in data]
-            else:
-                return [Favourite(**item) for item in data.get("favourites", [])]
-        except ValidationError as exc:
-            raise OekoboxValidationError(f"Invalid favourites data: {exc}") from exc
-
-    async def add_favourite(self, item_id: str) -> None:
-        """Add item to favorites."""
-        url = f"{self.api_base_url}/client/addfavourites"  # Official API method
-        params = {
-            "id": item_id
-        }  # API documentation shows 'id' parameter, not 'item_id'
-        await self._request("GET", url, params=params)
-
-    async def remove_favourite(self, item_id: str) -> None:
-        """Remove item from favorites."""
-        url = f"{self.api_base_url}/client/dropfavourites"  # Official API method
-        params = {
-            "id": item_id
-        }  # API documentation shows 'id' parameter, not 'item_id'
-        await self._request("GET", url, params=params)
-
-    # Shopping cart methods - Based on official API documentation
-    async def get_cart(self) -> list[CartItem]:
-        """Get current shopping cart contents."""
-        url = f"{self.api_base_url}/cart/show"
-        data = await self._request("GET", url)
-
-        try:
-            cart_items: list[CartItem] = []
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "CartItem":
-                        cart_data = item.get("data", [])
-                        for cart_row in cart_data:
-                            if (
-                                len(cart_row) >= 4 and cart_row[0] != 0
-                            ):  # Skip terminating entries
-                                cart_items.append(
-                                    CartItem(
-                                        item_id=str(cart_row[0]),
-                                        quantity=float(cart_row[1])
-                                        if cart_row[1]
-                                        else 1.0,
-                                        unit=cart_row[2] if len(cart_row) > 2 else None,
-                                        price=float(cart_row[3])
-                                        if len(cart_row) > 3 and cart_row[3]
-                                        else None,
-                                        note=cart_row[4] if len(cart_row) > 4 else None,
-                                    )
-                                )
-            return cart_items
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid cart data: {exc}") from exc
-
+    # Cart Methods
     async def add_to_cart(
         self,
-        item_id: str,
-        quantity: float = 1.0,
-        unit: str | None = None,
-        note: str | None = None,
-    ) -> list[CartItem]:
-        """Add an item to the shopping cart.
+        item_id: int,
+        amount: float = 1.0,
+        note: Optional[str] = None,
+        repeat: int = 0,
+        allow_duplicates: int = 0,
+        position: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """
+        Add item to cart.
 
         Args:
-            item_id: The ID of the item to add
-            quantity: Amount to add (default: 1.0)
-            unit: Unit specification (optional)
+            item_id: ID of item to add
+            amount: Amount in units (default: 1.0)
             note: Optional note for this cart position
+            repeat: Repeated delivery every X weeks (default: 0 = one-time)
+            allow_duplicates: 0=default, 1=clear existing, 2=add up
+            position: Specific position to replace
 
         Returns:
-            Updated cart contents
+            Cart operation response
         """
-        url = f"{self.api_base_url}/cart/add"
-        params = {"id": item_id, "amount": str(quantity)}
-        if unit:
-            params["unit"] = unit
+        data = {"id": item_id, "amount": amount}
         if note:
-            params["note"] = note
+            data["note"] = note
+        if repeat:
+            data["repeat"] = repeat
+        if allow_duplicates:
+            data["ad"] = allow_duplicates
+        if position is not None:
+            data["pos"] = position
 
-        try:
-            data = await self._request("POST", url, params=params)
-        except OekoboxAPIError as e:
-            # Handle the specific "no_ddate" error which means no delivery date is selected
-            if "no_ddate" in str(e):
-                raise OekoboxValidationError(
-                    "A delivery date must be selected before adding items to cart. Please select a delivery date first."
-                ) from e
-            else:
-                raise
-
-        try:
-            cart_items: list[CartItem] = []
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "CartItem":
-                        cart_data = item.get("data", [])
-                        for cart_row in cart_data:
-                            if len(cart_row) >= 4 and cart_row[0] != 0:
-                                cart_items.append(
-                                    CartItem(
-                                        item_id=str(cart_row[0]),
-                                        quantity=float(cart_row[1])
-                                        if cart_row[1]
-                                        else 1.0,
-                                        unit_price=float(cart_row[3])
-                                        if len(cart_row) > 3 and cart_row[3]
-                                        else None,
-                                        total_price=float(cart_row[3])
-                                        * float(cart_row[1])
-                                        if len(cart_row) > 3
-                                        and cart_row[3]
-                                        and cart_row[1]
-                                        else None,
-                                    )
-                                )
-            return cart_items
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid cart data: {exc}") from exc
+        return await self._request("POST", f"{self.api_base_url}/cart/add", data=data)
 
     async def remove_from_cart(
-        self, item_id: str | None = None, position: int | None = None
-    ) -> list[CartItem]:
-        """Remove an item from the shopping cart.
+        self, item_id: Optional[int] = None, position: Optional[int] = None
+    ) -> dict[str, Any]:
+        """
+        Remove item from cart.
 
         Args:
-            item_id: The ID of the item to remove (alternative to position)
-            position: Cart position to remove (alternative to item_id)
+            item_id: ID of item to remove
+            position: Alternative: cart position to delete
 
         Returns:
-            Updated cart contents
+            Cart operation response
         """
-        url = f"{self.api_base_url}/cart/remove"
+        data = {}
+        if item_id is not None:
+            data["id"] = item_id
+        if position is not None:
+            data["pos"] = position
+
+        return await self._request("POST", f"{self.api_base_url}/cart/remove", data=data)
+
+    async def show_cart(self) -> List[Any]:
+        """
+        Show current cart contents.
+
+        Returns:
+            List of cart items and related data
+        """
+        return await self._api_request("cart/show")
+
+    async def reset_cart(self) -> dict[str, Any]:
+        """
+        Reset/clear the entire cart.
+
+        Returns:
+            Reset operation response
+        """
+        return await self._request("POST", f"{self.api_base_url}/client/resetcart")
+
+    # Order Methods
+    async def get_orders(
+        self,
+        days_past: Optional[int] = None,
+        days_ahead: Optional[int] = None,
+        tour_ids: Optional[List[int]] = None,
+    ) -> List[Order]:
+        """
+        Lists orders that are currently in the system.
+
+        Args:
+            days_past: Days in the past from today (default 7)
+            days_ahead: Days ahead of today (default 0)
+            tour_ids: optional list of tourids
+
+        Returns:
+            List of Order objects
+        """
         params = {}
+        if days_past is not None:
+            params["pd"] = days_past
+        if days_ahead is not None:
+            params["ad"] = days_ahead
+        if tour_ids is not None:
+            params["tours"] = ",".join(map(str, tour_ids))
 
-        if item_id:
-            params["id"] = item_id
-        elif position is not None:
-            params["pos"] = str(position)
-        else:
-            raise ValueError("Either item_id or position must be provided")
+        return await self._api_request("orders", params=params)
 
-        data = await self._request("POST", url, params=params)
+    async def get_order(self, order_id: int) -> List[Order]:
+        """
+        Get specific order by ID.
 
-        try:
-            cart_items: list[CartItem] = []
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "CartItem":
-                        cart_data = item.get("data", [])
-                        for cart_row in cart_data:
-                            if len(cart_row) >= 4 and cart_row[0] != 0:
-                                cart_items.append(
-                                    CartItem(
-                                        item_id=str(cart_row[0]),
-                                        quantity=float(cart_row[1])
-                                        if cart_row[1]
-                                        else 1.0,
-                                        unit=cart_row[2] if len(cart_row) > 2 else None,
-                                        price=float(cart_row[3])
-                                        if len(cart_row) > 3 and cart_row[3]
-                                        else None,
-                                        note=cart_row[4] if len(cart_row) > 4 else None,
-                                    )
-                                )
-            return cart_items
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid cart data: {exc}") from exc
+        Args:
+            order_id: Order ID to retrieve
 
-    async def clear_cart(self) -> None:
-        """Clear the shopping cart by using the client resetcart method."""
-        url = f"{self.api_base_url}/client/resetcart"
-        try:
-            await self._request("GET", url)
-            # The resetcart endpoint may return an empty response or just "ok"
-            # We consider it successful if no exception was raised
-        except OekoboxAPIError as e:
-            # Handle the case where the API returns an empty result string
-            if "API error:" in str(e) and e.status_code == 200:
-                # This is likely an empty response which should be considered success
-                pass
-            else:
-                raise
+        Returns:
+            List containing the Order object
+        """
+        return await self._api_request(f"order26/{order_id}")
 
-    # Individual item methods
-    async def get_item(self, item_id: str) -> Item:
-        """Get detailed information about a specific item."""
-        # Try multiple endpoints for getting individual items
-        urls_to_try = [
-            f"{self.api_base_url}/item/{item_id}",
-            f"{self.base_url}/item/{item_id}",
-            f"{self.api_base_url}/items1/-1",  # Get all items and filter
-        ]
+    async def get_order_items(self, order_id: int) -> List[Item|XUnit]:
+        """
+        Provides the items of a given order. Other options for obtaining items are the itemlist or group calls.
 
-        for url in urls_to_try:
-            try:
-                data = await self._request("GET", url)
+        Args:
+            order_id: the order id for which the items should be listed in the response
 
-                # Handle the documented response format for single items
-                if isinstance(data, list) and len(data) > 0:
-                    for item in data:
-                        if isinstance(item, dict) and item.get("type") == "Item":
-                            item_data = item.get("data", [])
-                            for item_row in item_data:
-                                if len(item_row) >= 4 and str(item_row[0]) == item_id:
-                                    return Item(
-                                        id=str(item_row[0]),
-                                        name=item_row[1],
-                                        price=float(item_row[2])
-                                        if item_row[2]
-                                        else None,
-                                        description=item_row[4]
-                                        if len(item_row) > 4
-                                        else None,
-                                        group_id=str(item_row[5])
-                                        if len(item_row) > 5
-                                        else None,
-                                        unit=item_row[3] if len(item_row) > 3 else None,
-                                    )
-                elif isinstance(data, dict):
-                    return Item(**data)
+        Returns:
+            List of Item and associated XUnit objects
+        """
+        return await self._api_request(f"orderitems/{order_id}")
 
-            except OekoboxAPIError as e:
-                if e.status_code == 404:
-                    continue  # Try next URL
-                else:
-                    raise
+    async def new_order(
+        self,
+        delivery_date: str,
+        tour_id: Optional[int] = None,
+        customer_note: Optional[str] = None,
+        delivery_note: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Create new order from current cart.
 
-        # If no direct item endpoint works, try to get from all items
-        try:
-            items = await self.get_items()
-            for item in items:
-                if item.id == item_id:
-                    return item
-        except Exception:
-            # Using pass here is acceptable for fallback behavior
-            pass  # nosec B110
+        Args:
+            delivery_date: Desired delivery date (ISO format)
+            tour_id: Specific tour ID for delivery
+            customer_note: Customer note for the order
+            delivery_note: Note for delivery team
 
-        raise OekoboxValidationError(f"Item not found: {item_id}")
+        Returns:
+            Order creation response
+        """
+        data = {"ddate": delivery_date}
+        if tour_id is not None:
+            data["tour"] = tour_id
+        if customer_note:
+            data["cnote"] = customer_note
+        if delivery_note:
+            data["rnote"] = delivery_note
 
-    # Order methods - Based on official API documentation
-    async def get_orders(self) -> list[Order]:
-        """Get customer's order history."""
-        # Try different endpoints that might provide orders
-        try:
-            # First try the dates1 endpoint which includes ShopDate objects (orders)
-            url = f"{self.base_url}/dates1"
-            data = await self._request("GET", url)
+        return await self._request("POST", f"{self.api_base_url}/client/neworder", data=data)
 
-            orders: list[Order] = []
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "ShopDate":
-                        shopdate_data = item.get("data", [])
-                        for order_row in shopdate_data:
-                            if (
-                                len(order_row) >= 8
-                                and order_row[0] != -1
-                                and order_row[0] != 0
-                            ):  # Valid order IDs
-                                # Parse delivery date from the ShopDate format
-                                delivery_date = None
-                                if len(order_row) > 2 and order_row[2]:
-                                    with suppress(ValueError, TypeError):
-                                        delivery_date = datetime.fromisoformat(
-                                            order_row[2]
-                                        ).date()
+    async def cancel_order(self, order_id: int) -> dict[str, Any]:
+        """
+        Cancel an existing order.
 
-                                orders.append(
-                                    Order(
-                                        id=str(order_row[0]),
-                                        customer_id=self.username,
-                                        delivery_date=delivery_date,
-                                        status=order_row[1]
-                                        if len(order_row) > 1
-                                        else None,
-                                        total=float(order_row[9])
-                                        if len(order_row) > 9 and order_row[9]
-                                        else None,
-                                    )
-                                )
-            return orders
+        Args:
+            order_id: Order ID to cancel
 
-        except OekoboxAPIError:
-            # Fallback to empty list if endpoint not available
-            return []
+        Returns:
+            Cancellation response
+        """
+        data = {"order": order_id}
+        return await self._request("POST", f"{self.api_base_url}/client/cancelorder", data=data)
 
-    async def get_order(self, order_id: str) -> Order:
-        """Get detailed information about a specific order."""
-        url = f"{self.api_base_url}/order2/{order_id}"
+    async def change_order(
+        self,
+        order_id: int,
+        delivery_date: Optional[str] = None,
+        customer_note: Optional[str] = None,
+        delivery_note: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Change an existing order.
 
-        try:
-            data = await self._request("GET", url)
-        except OekoboxAPIError as e:
-            if e.status_code == 404:
-                raise OekoboxValidationError(f"Order not found: {order_id}") from e
-            else:
-                raise
+        Args:
+            order_id: Order ID to change
+            delivery_date: New delivery date
+            customer_note: New customer note
+            delivery_note: New delivery note
 
-        try:
-            # Handle the documented response format for orders
-            if isinstance(data, list) and len(data) > 0:
-                for item in data:
-                    if isinstance(item, dict) and item.get("type") == "Order":
-                        order_data = item.get("data", [])
-                        if len(order_data) > 0 and len(order_data[0]) >= 2:
-                            order_row = order_data[0]
-                            from datetime import datetime
+        Returns:
+            Change response
+        """
+        data = {"order": order_id}
+        if delivery_date:
+            data["ddate"] = delivery_date
+        if customer_note:
+            data["cnote"] = customer_note
+        if delivery_note:
+            data["rnote"] = delivery_note
 
-                            delivery_date = None
-                            if len(order_row) > 1 and order_row[1]:
-                                with suppress(ValueError, TypeError):
-                                    delivery_date = datetime.fromisoformat(
-                                        order_row[1]
-                                    ).date()
+        return await self._request("POST", f"{self.api_base_url}/client/changeorder", data=data)
 
-                            return Order(
-                                id=str(order_row[0]),
-                                customer_id=self.username,
-                                delivery_date=delivery_date,
-                                status=order_row[2] if len(order_row) > 2 else None,
-                                total=None,  # Total might be calculated from positions
-                            )
-            elif isinstance(data, dict):
-                return Order(**data)
+    # Tour and Delivery Methods
+    async def get_tour(self, tour_id: int) -> List[Tour|DDate|Delivery|Address]:
+        """
+        Provides Tour Information.
 
-            raise OekoboxValidationError(f"Order not found in response: {order_id}")
-        except (ValidationError, IndexError, KeyError) as exc:
-            raise OekoboxValidationError(f"Invalid order data: {exc}") from exc
+        This includes everything to deliver the goods after on-site packing.
+        The Tour-Objects contains the general tour info, together with associated DDate and a ordered sequence of Delivery-Objects. These Delivery-Objects reference addresses which are to be targeted in that tour.It further has a reference to the order, which provides many more details.
+        Note that the reference is using a composite key Delivery.CustomerId-Delivery.AddressName to point to the right address, as customers might have multiple (named) addresses.
+        Since these objects are provided separatly, the could be updated separatly too. Any update requires the submitting of a appropriate version reference to implement a optimistic locking.
+        See also API.methods.driver, API.methods.tours
+
+        Args:
+            tour_id: The tour-instance-id (tid) is the ID provided from the API.methods.tours-Call. Its the Id of the DDate record.
+
+        Returns:
+            A sequence of these objects: Tour, DDate, a list of Deliveries, and a list of Addresses.
+        """
+        return await self._api_request(f"tour30/{tour_id}")
+
+    async def get_dates(self) -> List[ShopDate|Pause|Subscription|Favourite|AuxDate|DeselectedItem|DeselectedGroup]:
+        """
+        Get available delivery dates.
+
+        Returns:
+            List of objects of type ShopDate, Pause, Subscription, Favourite, AuxDate, DeselectedItem, or DeselectedGroup
+        """
+        return await self._api_request("dates7")
+
+    async def set_tour(self, tour_id: int) -> dict[str, Any]:
+        """
+        Set preferred delivery tour for the customer.
+
+        Args:
+            tour_id: Tour ID to set as preference
+
+        Returns:
+            Tour setting response
+        """
+        data = {"tour": tour_id}
+        return await self._request("POST", f"{self.api_base_url}/client/settour", data=data)
+
+    async def add_subscription(
+        self,
+        item_id: int,
+        amount: float,
+        interval: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Add item subscription.
+
+        Args:
+            item_id: Item ID to subscribe to
+            amount: Amount per delivery
+            interval: Delivery interval in weeks
+
+        Returns:
+            Subscription response
+        """
+        data = {
+            "item": item_id,
+            "amount": amount,
+            "interval": interval,
+        }
+        return await self._request("POST", f"{self.api_base_url}/client/addsubscription", data=data)
+
+    async def change_subscription(
+        self,
+        subscription_id: int,
+        amount: Optional[float] = None,
+        interval: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """
+        Change existing subscription.
+
+        Args:
+            subscription_id: Subscription ID to change
+            amount: New amount per delivery
+            interval: New delivery interval in weeks
+
+        Returns:
+            Change response
+        """
+        data = {"subscription": subscription_id}
+        if amount is not None:
+            data["amount"] = amount
+        if interval is not None:
+            data["interval"] = interval
+
+        return await self._request("POST", f"{self.api_base_url}/client/changesubscription", data=data)
+
+    async def drop_subscription(self, subscription_id: int) -> dict[str, Any]:
+        """
+        Cancel/drop a subscription.
+
+        Args:
+            subscription_id: Subscription ID to cancel
+
+        Returns:
+            Cancellation response
+        """
+        data = {"subscription": subscription_id}
+        return await self._request("POST", f"{self.api_base_url}/client/dropsubscription", data=data)
+
+    # Favourites Methods
+    async def get_favourites(self) -> List[Favourite]:
+        """
+        Get customer favourite items.
+
+        Returns:
+            List of Favourite objects
+        """
+        return await self._api_request("client/favourites")
+
+    async def add_favourites(self, item_ids: List[int]) -> dict[str, Any]:
+        """
+        Add items to favourites.
+
+        Args:
+            item_ids: List of item IDs to add to favourites
+
+        Returns:
+            Add favourites response
+        """
+        ids_param = ",".join(map(str, item_ids))
+        data = {"items": ids_param}
+        return await self._request("POST", f"{self.api_base_url}/client/addfavourites", data=data)
+
+    async def drop_favourites(self, item_ids: List[int]) -> dict[str, Any]:
+        """
+        Remove items from favourites.
+
+        Args:
+            item_ids: List of item IDs to remove from favourites
+
+        Returns:
+            Remove favourites response
+        """
+        ids_param = ",".join(map(str, item_ids))
+        data = {"items": ids_param}
+        return await self._request("POST", f"{self.api_base_url}/client/dropfavourites", data=data)
+
+    # User Profile Methods
+    async def get_user_info(self) -> List[UserInfo]:
+        """
+        Get current user information.
+
+        Returns:
+            List containing UserInfo object
+        """
+        return await self._api_request("user20")
+
+    async def set_profile(self, profile_data: Dict[str, Any]) -> dict[str, Any]:
+        """
+        Update user profile information.
+
+        Args:
+            profile_data: Dictionary of profile fields to update
+
+        Returns:
+            Profile update response
+        """
+        return await self._request("POST", f"{self.api_base_url}/client/setprofile", data=profile_data)
+
+    async def change_password(self, old_password: str, new_password: str) -> dict[str, Any]:
+        """
+        Change user password.
+
+        Args:
+            old_password: Current password
+            new_password: New password
+
+        Returns:
+            Password change response
+        """
+        data = {
+            "oldpass": old_password,
+            "newpass": new_password,
+        }
+        return await self._request("POST", f"{self.api_base_url}/client/password", data=data)
+
+    # Search Methods
+    async def search(self, query: str, limit: Optional[int] = None) -> List[Item]:
+        """
+        Search for items.
+
+        Args:
+            query: Search query string
+            limit: Maximum number of results
+
+        Returns:
+            List of matching Item objects
+        """
+        params = {"q": query}
+        if limit is not None:
+            params["limit"] = limit
+
+        return await self._api_request("search", params=params)
+
+    async def get_delivery_state(self) -> List[DeliveryState]:
+        """
+        Delivery State or forecast for a given customer.
+
+        If the caller has administrative permissions, the preceeding and following customer numbers are shown and a cid may be handed over. otherwise, the executers data is used.
+
+        Returns:
+            A API.objects.DeliveryState Object TBD
+        """
+        return await self._api_request("client/delivery")
+
+    # Shop Information Methods
+    async def get_shop_info(self) -> List[Shop]:
+        """
+        Get shop information and configuration.
+
+        Returns:
+            List containing Shop object
+        """
+        # The shop info endpoint is not part of the standard API, so we fetch it directly.
+        # Its response needs to be wrapped in a DataList format to handle it similar to
+        # the other models.
+        return parse_data_list_response([{"type": "Shop", "data": await self._request("GET", "https://oekobox-online.eu/v3/shoplist.js.jsp")}])
+
+    # Utility Methods
+    async def find_shop(self, lat: float, lng: float) -> List[ShopUrl]:
+        """
+        Find shops by location.
+
+        Args:
+            lat: lat/lng are latitude/longitide paramaters in the common wds84 decimal format
+            lng: lat/lng are latitude/longitide paramaters in the common wds84 decimal format
+
+        Returns:
+            List of Shop objects
+        """
+        params = {"lat":lat,"lng":lng}
+        return parse_data_list_response(await self._request("GET","https://oekobox-online.de/v3/findshop", params))
+
+    # Start method - combines authentication with data fetching
+    async def start(
+        self,
+        include_groups: bool = True,
+        include_tours: bool = True,
+        include_dates: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Combined start method that authenticates and fetches initial data.
+
+        Args:
+            include_groups: Include product groups in response
+            include_tours: Include delivery tours in response
+            include_dates: Include delivery dates in response
+
+        Returns:
+            Combined response with authentication and data
+
+        Deprecated:
+            This method is deprecated in favor of explicit calls to `logon` and data fetching methods.
+        """
+        params = {
+            "cid": self.username,
+            "pass": self.password,
+        }
+        if include_groups:
+            params["groups"] = "1"
+        if include_tours:
+            params["tours"] = "1"
+        if include_dates:
+            params["dates"] = "1"
+
+        return await self._api_request("start", params=params)
