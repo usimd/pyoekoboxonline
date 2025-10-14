@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -13,26 +13,27 @@ from .exceptions import (
     OekoboxValidationError,
 )
 from .models import (
-    parse_data_list_response,
     Address,
-    Assorted,
-    Assortment,
-    Box,
-    CartItem,
-    CustomerInfo,
+    AuxDate,
     DDate,
     Delivery,
+    DeliveryState,
+    DeselectedGroup,
+    DeselectedItem,
     Favourite,
     Group,
     Item,
     Order,
-    Position,
+    Pause,
     Shop,
+    ShopDate,
+    ShopUrl,
     SubGroup,
     Subscription,
     Tour,
     UserInfo,
-    ShopDate, Pause, AuxDate, DeselectedItem, DeselectedGroup, XUnit, DeliveryState, ShopUrl,
+    XUnit,
+    parse_data_list_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,7 @@ class OekoboxClient:
         params: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any]|List[Dict[str, Any]]:
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """Make an HTTP request with proper session management.
 
         According to official API docs, sessions can be maintained via:
@@ -261,7 +262,9 @@ class OekoboxClient:
             params["cid"] = self.username
             params["pass"] = self.password
 
-        response = await self._request("GET", f"{self.api_base_url}/logon", params=params)
+        response = await self._request(
+            "GET", f"{self.api_base_url}/logon", params=params
+        )
 
         # Check logon result
         result = response.get("result")
@@ -298,7 +301,7 @@ class OekoboxClient:
         return response
 
     # Core Data Methods
-    async def get_groups(self) -> List[Group]:
+    async def get_groups(self) -> list[Group]:
         """
         Get all product groups/categories.
 
@@ -307,7 +310,7 @@ class OekoboxClient:
         """
         return await self._api_request("groups")
 
-    async def get_subgroups(self, group_id: Optional[int] = None) -> List[SubGroup]:
+    async def get_subgroups(self, group_id: int | None = None) -> list[SubGroup]:
         """
         Get subgroups, optionally filtered by parent group.
 
@@ -324,13 +327,13 @@ class OekoboxClient:
 
     async def get_items(
         self,
-        group_id: Optional[int] = None,
-        subgroup_id: Optional[int] = None,
-        rubric_id: Optional[int] = None,
-        search: Optional[str] = None,
+        group_id: int | None = None,
+        subgroup_id: int | None = None,
+        rubric_id: int | None = None,
+        search: str | None = None,
         hidden: bool = False,
         timeless: bool = False,
-    ) -> List[Item]:
+    ) -> list[Item]:
         """
         Get items with optional filtering.
 
@@ -361,7 +364,7 @@ class OekoboxClient:
 
         return await self._api_request("items", params=params)
 
-    async def get_item(self, item_id: int) -> List[Item]:
+    async def get_item(self, item_id: int) -> list[Item]:
         """
         Get specific item by ID.
 
@@ -373,7 +376,12 @@ class OekoboxClient:
         """
         return await self._api_request(f"item/{item_id}")
 
-    async def get_itemlist(self, item_ids: List[int], tour_id: int|None=None, order_id: int|None=None) -> List[Item|XUnit]:
+    async def get_itemlist(
+        self,
+        item_ids: list[int],
+        tour_id: int | None = None,
+        order_id: int | None = None,
+    ) -> list[Item | XUnit]:
         """
         This method allows to obtain the information for a set of items, provided as argument.
 
@@ -398,10 +406,10 @@ class OekoboxClient:
         self,
         item_id: int,
         amount: float = 1.0,
-        note: Optional[str] = None,
+        note: str | None = None,
         repeat: int = 0,
         allow_duplicates: int = 0,
-        position: Optional[int] = None,
+        position: int | None = None,
     ) -> dict[str, Any]:
         """
         Add item to cart.
@@ -430,7 +438,7 @@ class OekoboxClient:
         return await self._request("POST", f"{self.api_base_url}/cart/add", data=data)
 
     async def remove_from_cart(
-        self, item_id: Optional[int] = None, position: Optional[int] = None
+        self, item_id: int | None = None, position: int | None = None
     ) -> dict[str, Any]:
         """
         Remove item from cart.
@@ -448,9 +456,11 @@ class OekoboxClient:
         if position is not None:
             data["pos"] = position
 
-        return await self._request("POST", f"{self.api_base_url}/cart/remove", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/cart/remove", data=data
+        )
 
-    async def show_cart(self) -> List[Any]:
+    async def show_cart(self) -> list[Any]:
         """
         Show current cart contents.
 
@@ -471,10 +481,10 @@ class OekoboxClient:
     # Order Methods
     async def get_orders(
         self,
-        days_past: Optional[int] = None,
-        days_ahead: Optional[int] = None,
-        tour_ids: Optional[List[int]] = None,
-    ) -> List[Order]:
+        days_past: int | None = None,
+        days_ahead: int | None = None,
+        tour_ids: list[int] | None = None,
+    ) -> list[Order]:
         """
         Lists orders that are currently in the system.
 
@@ -496,7 +506,7 @@ class OekoboxClient:
 
         return await self._api_request("orders", params=params)
 
-    async def get_order(self, order_id: int) -> List[Order]:
+    async def get_order(self, order_id: int) -> list[Order]:
         """
         Get specific order by ID.
 
@@ -508,7 +518,7 @@ class OekoboxClient:
         """
         return await self._api_request(f"order26/{order_id}")
 
-    async def get_order_items(self, order_id: int) -> List[Item|XUnit]:
+    async def get_order_items(self, order_id: int) -> list[Item | XUnit]:
         """
         Provides the items of a given order. Other options for obtaining items are the itemlist or group calls.
 
@@ -523,9 +533,9 @@ class OekoboxClient:
     async def new_order(
         self,
         delivery_date: str,
-        tour_id: Optional[int] = None,
-        customer_note: Optional[str] = None,
-        delivery_note: Optional[str] = None,
+        tour_id: int | None = None,
+        customer_note: str | None = None,
+        delivery_note: str | None = None,
     ) -> dict[str, Any]:
         """
         Create new order from current cart.
@@ -547,7 +557,9 @@ class OekoboxClient:
         if delivery_note:
             data["rnote"] = delivery_note
 
-        return await self._request("POST", f"{self.api_base_url}/client/neworder", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/neworder", data=data
+        )
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         """
@@ -560,14 +572,16 @@ class OekoboxClient:
             Cancellation response
         """
         data = {"order": order_id}
-        return await self._request("POST", f"{self.api_base_url}/client/cancelorder", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/cancelorder", data=data
+        )
 
     async def change_order(
         self,
         order_id: int,
-        delivery_date: Optional[str] = None,
-        customer_note: Optional[str] = None,
-        delivery_note: Optional[str] = None,
+        delivery_date: str | None = None,
+        customer_note: str | None = None,
+        delivery_note: str | None = None,
     ) -> dict[str, Any]:
         """
         Change an existing order.
@@ -589,17 +603,19 @@ class OekoboxClient:
         if delivery_note:
             data["rnote"] = delivery_note
 
-        return await self._request("POST", f"{self.api_base_url}/client/changeorder", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/changeorder", data=data
+        )
 
     # Tour and Delivery Methods
-    async def get_tour(self, tour_id: int) -> List[Tour|DDate|Delivery|Address]:
+    async def get_tour(self, tour_id: int) -> list[Tour | DDate | Delivery | Address]:
         """
         Provides Tour Information.
 
         This includes everything to deliver the goods after on-site packing.
         The Tour-Objects contains the general tour info, together with associated DDate and a ordered sequence of Delivery-Objects. These Delivery-Objects reference addresses which are to be targeted in that tour.It further has a reference to the order, which provides many more details.
         Note that the reference is using a composite key Delivery.CustomerId-Delivery.AddressName to point to the right address, as customers might have multiple (named) addresses.
-        Since these objects are provided separatly, the could be updated separatly too. Any update requires the submitting of a appropriate version reference to implement a optimistic locking.
+        Since these objects are provided separately, the could be updated separately too. Any update requires the submitting of a appropriate version reference to implement a optimistic locking.
         See also API.methods.driver, API.methods.tours
 
         Args:
@@ -610,7 +626,17 @@ class OekoboxClient:
         """
         return await self._api_request(f"tour30/{tour_id}")
 
-    async def get_dates(self) -> List[ShopDate|Pause|Subscription|Favourite|AuxDate|DeselectedItem|DeselectedGroup]:
+    async def get_dates(
+        self,
+    ) -> list[
+        ShopDate
+        | Pause
+        | Subscription
+        | Favourite
+        | AuxDate
+        | DeselectedItem
+        | DeselectedGroup
+    ]:
         """
         Get available delivery dates.
 
@@ -630,7 +656,9 @@ class OekoboxClient:
             Tour setting response
         """
         data = {"tour": tour_id}
-        return await self._request("POST", f"{self.api_base_url}/client/settour", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/settour", data=data
+        )
 
     async def add_subscription(
         self,
@@ -654,13 +682,15 @@ class OekoboxClient:
             "amount": amount,
             "interval": interval,
         }
-        return await self._request("POST", f"{self.api_base_url}/client/addsubscription", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/addsubscription", data=data
+        )
 
     async def change_subscription(
         self,
         subscription_id: int,
-        amount: Optional[float] = None,
-        interval: Optional[int] = None,
+        amount: float | None = None,
+        interval: int | None = None,
     ) -> dict[str, Any]:
         """
         Change existing subscription.
@@ -679,7 +709,9 @@ class OekoboxClient:
         if interval is not None:
             data["interval"] = interval
 
-        return await self._request("POST", f"{self.api_base_url}/client/changesubscription", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/changesubscription", data=data
+        )
 
     async def drop_subscription(self, subscription_id: int) -> dict[str, Any]:
         """
@@ -692,10 +724,12 @@ class OekoboxClient:
             Cancellation response
         """
         data = {"subscription": subscription_id}
-        return await self._request("POST", f"{self.api_base_url}/client/dropsubscription", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/dropsubscription", data=data
+        )
 
     # Favourites Methods
-    async def get_favourites(self) -> List[Favourite]:
+    async def get_favourites(self) -> list[Favourite]:
         """
         Get customer favourite items.
 
@@ -704,7 +738,7 @@ class OekoboxClient:
         """
         return await self._api_request("client/favourites")
 
-    async def add_favourites(self, item_ids: List[int]) -> dict[str, Any]:
+    async def add_favourites(self, item_ids: list[int]) -> dict[str, Any]:
         """
         Add items to favourites.
 
@@ -716,9 +750,11 @@ class OekoboxClient:
         """
         ids_param = ",".join(map(str, item_ids))
         data = {"items": ids_param}
-        return await self._request("POST", f"{self.api_base_url}/client/addfavourites", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/addfavourites", data=data
+        )
 
-    async def drop_favourites(self, item_ids: List[int]) -> dict[str, Any]:
+    async def drop_favourites(self, item_ids: list[int]) -> dict[str, Any]:
         """
         Remove items from favourites.
 
@@ -730,10 +766,12 @@ class OekoboxClient:
         """
         ids_param = ",".join(map(str, item_ids))
         data = {"items": ids_param}
-        return await self._request("POST", f"{self.api_base_url}/client/dropfavourites", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/dropfavourites", data=data
+        )
 
     # User Profile Methods
-    async def get_user_info(self) -> List[UserInfo]:
+    async def get_user_info(self) -> list[UserInfo]:
         """
         Get current user information.
 
@@ -742,7 +780,7 @@ class OekoboxClient:
         """
         return await self._api_request("user20")
 
-    async def set_profile(self, profile_data: Dict[str, Any]) -> dict[str, Any]:
+    async def set_profile(self, profile_data: dict[str, Any]) -> dict[str, Any]:
         """
         Update user profile information.
 
@@ -752,9 +790,13 @@ class OekoboxClient:
         Returns:
             Profile update response
         """
-        return await self._request("POST", f"{self.api_base_url}/client/setprofile", data=profile_data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/setprofile", data=profile_data
+        )
 
-    async def change_password(self, old_password: str, new_password: str) -> dict[str, Any]:
+    async def change_password(
+        self, old_password: str, new_password: str
+    ) -> dict[str, Any]:
         """
         Change user password.
 
@@ -769,10 +811,12 @@ class OekoboxClient:
             "oldpass": old_password,
             "newpass": new_password,
         }
-        return await self._request("POST", f"{self.api_base_url}/client/password", data=data)
+        return await self._request(
+            "POST", f"{self.api_base_url}/client/password", data=data
+        )
 
     # Search Methods
-    async def search(self, query: str, limit: Optional[int] = None) -> List[Item]:
+    async def search(self, query: str, limit: int | None = None) -> list[Item]:
         """
         Search for items.
 
@@ -789,11 +833,11 @@ class OekoboxClient:
 
         return await self._api_request("search", params=params)
 
-    async def get_delivery_state(self) -> List[DeliveryState]:
+    async def get_delivery_state(self) -> list[DeliveryState]:
         """
         Delivery State or forecast for a given customer.
 
-        If the caller has administrative permissions, the preceeding and following customer numbers are shown and a cid may be handed over. otherwise, the executers data is used.
+        If the caller has administrative permissions, the preceding and following customer numbers are shown and a cid may be handed over. otherwise, the executers data is used.
 
         Returns:
             A API.objects.DeliveryState Object TBD
@@ -801,7 +845,7 @@ class OekoboxClient:
         return await self._api_request("client/delivery")
 
     # Shop Information Methods
-    async def get_shop_info(self) -> List[Shop]:
+    async def get_shop_info(self) -> list[Shop]:
         """
         Get shop information and configuration.
 
@@ -811,22 +855,33 @@ class OekoboxClient:
         # The shop info endpoint is not part of the standard API, so we fetch it directly.
         # Its response needs to be wrapped in a DataList format to handle it similar to
         # the other models.
-        return parse_data_list_response([{"type": "Shop", "data": await self._request("GET", "https://oekobox-online.eu/v3/shoplist.js.jsp")}])
+        return parse_data_list_response(
+            [
+                {
+                    "type": "Shop",
+                    "data": await self._request(
+                        "GET", "https://oekobox-online.eu/v3/shoplist.js.jsp"
+                    ),
+                }
+            ]
+        )
 
     # Utility Methods
-    async def find_shop(self, lat: float, lng: float) -> List[ShopUrl]:
+    async def find_shop(self, lat: float, lng: float) -> list[ShopUrl]:
         """
         Find shops by location.
 
         Args:
-            lat: lat/lng are latitude/longitide paramaters in the common wds84 decimal format
-            lng: lat/lng are latitude/longitide paramaters in the common wds84 decimal format
+            lat: lat/lng are latitude/longitide parameters in the common wds84 decimal format
+            lng: lat/lng are latitude/longitide parameters in the common wds84 decimal format
 
         Returns:
             List of Shop objects
         """
-        params = {"lat":lat,"lng":lng}
-        return parse_data_list_response(await self._request("GET","https://oekobox-online.de/v3/findshop", params))
+        params = {"lat": lat, "lng": lng}
+        return parse_data_list_response(
+            await self._request("GET", "https://oekobox-online.de/v3/findshop", params)
+        )
 
     # Start method - combines authentication with data fetching
     async def start(

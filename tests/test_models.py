@@ -1,436 +1,336 @@
-"""Tests for Ökobox Online API data models."""
+"""
+Unit tests for the pyoekoboxonline models.
 
-from datetime import date, datetime
+Tests the DataListModel base class functionality and specific model implementations.
+"""
+
+from dataclasses import dataclass, field
 
 import pytest
-from pydantic import ValidationError
 
 from pyoekoboxonline.models import (
+    MODEL_REGISTRY,
     Address,
-    APIResponse,
     CartItem,
-    CustomerInfo,
-    DDate,
-    Delivery,
-    DeliveryState,
-    Favourite,
+    DataListModel,
+    DataListResponse,
     Group,
     Item,
     Order,
-    Shop,
-    SubGroup,
     Subscription,
     UserInfo,
+    XUnit,
+    parse_data_list_response,
 )
 
 
-class TestModels:
-    """Test cases for Ökobox Online API Pydantic models."""
+class TestDataListModel:
+    """Test the DataListModel base class functionality."""
 
-    def test_shop_model_valid(self):
-        """Test valid Shop model creation."""
-        shop_data = {
-            "id": "shop_123",
-            "name": "Organic Market Berlin",
-            "latitude": 52.5200,
-            "longitude": 13.4050,
-            "delivery_lat": 52.5300,
-            "delivery_lng": 13.4150,
-        }
-        shop = Shop(**shop_data)
-        assert shop.id == "shop_123"
-        assert shop.name == "Organic Market Berlin"
-        assert shop.latitude == 52.5200
-        assert shop.longitude == 13.4050
-        assert shop.delivery_lat == 52.5300
-        assert shop.delivery_lng == 13.4150
+    def test_from_data_list_entry_requires_dataclass(self):
+        """Test that from_data_list_entry requires a dataclass."""
 
-    def test_shop_model_minimal(self):
-        """Test Shop model with minimal required fields."""
-        shop_data = {
-            "id": "shop_456",
-            "name": "Market",
-            "latitude": 50.0,
-            "longitude": 10.0,
-        }
-        shop = Shop(**shop_data)
-        assert shop.id == "shop_456"
-        assert shop.name == "Market"
-        assert shop.latitude == 50.0
-        assert shop.longitude == 10.0
-        assert shop.delivery_lat is None
-        assert shop.delivery_lng is None
+        class NotADataclass(DataListModel):
+            pass
 
-    def test_address_model(self):
-        """Test Address model creation."""
-        address_data = {
-            "street": "123 Main St",
-            "city": "Berlin",
-            "postal_code": "12345",
-            "country": "Germany",
-            "latitude": 52.5200,
-            "longitude": 13.4050,
-        }
-        address = Address(**address_data)
+        with pytest.raises(ValueError, match="must be a dataclass"):
+            NotADataclass.from_data_list_entry([])
+
+    def test_from_data_list_entry_basic_functionality(self):
+        """Test basic functionality of from_data_list_entry."""
+
+        @dataclass
+        class TestModel(DataListModel):
+            id: int | None = field(default=None)
+            name: str | None = field(default=None)
+            price: float | None = field(default=None)
+
+        data = [123, "Test Item", 45.99]
+        instance = TestModel.from_data_list_entry(data)
+
+        assert instance.id == 123
+        assert instance.name == "Test Item"
+        assert instance.price == 45.99
+
+    def test_from_data_list_entry_with_missing_data(self):
+        """Test handling of missing data in array."""
+
+        @dataclass
+        class TestModel(DataListModel):
+            id: int | None = field(default=None)
+            name: str | None = field(default=None)
+            price: float | None = field(default=None)
+            description: str | None = field(default=None)
+
+        # Data array shorter than expected fields
+        data = [123, "Test Item"]
+        instance = TestModel.from_data_list_entry(data)
+
+        assert instance.id == 123
+        assert instance.name == "Test Item"
+        assert instance.price is None
+        assert instance.description is None
+
+    def test_from_data_list_entry_with_empty_values(self):
+        """Test handling of empty/null values."""
+
+        @dataclass
+        class TestModel(DataListModel):
+            id: int | None = field(default=None)
+            name: str | None = field(default=None)
+            price: float | None = field(default=None)
+
+        data = [123, "", None]
+        instance = TestModel.from_data_list_entry(data)
+
+        assert instance.id == 123
+        assert instance.name is None
+        assert instance.price is None
+
+    def test_from_data_list_entry_type_conversions(self):
+        """Test automatic type conversions."""
+
+        @dataclass
+        class TestModel(DataListModel):
+            id: int | None = field(default=None)
+            active: bool | None = field(default=None)
+            price: float | None = field(default=None)
+            name: str | None = field(default=None)
+
+        data = ["123", "1", "45.99", 456]  # String inputs that need conversion
+        instance = TestModel.from_data_list_entry(data)
+
+        assert instance.id == 123
+        assert instance.active is True
+        assert instance.price == 45.99
+        assert instance.name == "456"
+
+    def test_from_data_list_entry_conversion_failures(self):
+        """Test handling of type conversion failures."""
+
+        @dataclass
+        class TestModel(DataListModel):
+            id: int | None = field(default=None)
+            price: float | None = field(default=None)
+
+        data = ["not_a_number", "also_not_a_number"]
+        instance = TestModel.from_data_list_entry(data)
+
+        # Failed conversions should result in None
+        assert instance.id is None
+        assert instance.price is None
+
+
+class TestSpecificModels:
+    """Test specific model implementations."""
+
+    def test_item_model_creation(self):
+        """Test Item model creation from data list entry."""
+        data = [
+            1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0, 0, 0.25, "S",
+            "0", "2.30", "hash123", "1", 1, 1, "2024-01-01", "2024-01-31",
+            "2024-01-01", "2024-01-31", "0", 1, 0, 1, "apple fruit", "kg",
+            "hash456", "Test Pack", "Organic", "Local Farm", 1, 1.0, 5.0, 1.0,
+            0.5, 3, 2.0, "bio,organic", 1, 1, 1, 0, "Delicious", 1, "piece",
+            0, "EU:Organic", 0, "Class I", 1, 1, 2.5, 1.2, 90, "500g pack",
+            2.0, 2.0, "2.00", 0, "2024-12-31", "Apple Brand", "EAN123456",
+            "Producer Name", 0, "Brand Name"
+        ]
+
+        item = Item.from_data_list_entry(data)
+
+        assert item.id == 1
+        assert item.name == "Apple"
+        assert item.price == 2.50
+        assert item.unit == "kg"
+        assert item.description == "Fresh red apples"
+
+    def test_group_model_creation(self):
+        """Test Group model creation from data list entry."""
+        data = [1, "Fruits", "Fresh fruits category", 25, 5, "bio,organic", 1, 1]
+
+        group = Group.from_data_list_entry(data)
+
+        assert group.id == 1
+        assert group.name == "Fruits"
+        assert group.infotext == "Fresh fruits category"
+        assert group.count == 25
+        assert group.subgroup_count == 5
+
+    def test_order_model_creation(self):
+        """Test Order model creation from data list entry."""
+        data = [123, "2024-01-15", "0", 1, "Customer note", "Delivery note",
+                "14:00", "2024-01-14T10:00:00", 1, 5.0, 0, 1, 100, "CODE123", 1, 456, 125.50]
+
+        order = Order.from_data_list_entry(data)
+
+        assert order.id == 123
+        assert order.ddate == "2024-01-15"
+        assert order.state == "0"
+        assert order.tour_id == 1
+        assert order.cnote == "Customer note"
+        assert order.rnote == "Delivery note"
+
+    def test_address_model_creation(self):
+        """Test Address model creation from data list entry."""
+        data = [100, "home", "Smith", "John", "123 Main St", "Berlin", "12345",
+                "12345", 52.5200, 13.4050, 95, "+49301234567", "+49151234567",
+                "Ring doorbell", "Use main entrance", "Handle with care"]
+
+        address = Address.from_data_list_entry(data)
+
+        assert address.customer_id == 100
+        assert address.address_name == "home"
+        assert address.name == "Smith"
+        assert address.firstname == "John"
         assert address.street == "123 Main St"
         assert address.city == "Berlin"
-        assert address.postal_code == "12345"
-        assert address.country == "Germany"
-        assert address.latitude == 52.5200
-        assert address.longitude == 13.4050
+        assert address.zip == "12345"
 
-    def test_address_model_minimal(self):
-        """Test Address model with minimal fields."""
-        address = Address()
-        assert address.street is None
-        assert address.city is None
-        assert address.postal_code is None
-        assert address.country is None
-        assert address.latitude is None
-        assert address.longitude is None
+    def test_userinfo_model_creation(self):
+        """Test UserInfo model creation from data list entry."""
+        data = ["AUTH", 123, "Dear", "John", "Smith", "0", "0", "0", "0", 0,
+                "0", "1", "1", "john@example.com", 0, "+49301234567", "+49151234567",
+                "DE", "12345", "Berlin", "Main St 123", 1234567890, 1, "Customer note",
+                "123", "SEPA123", "Jane Smith", "54321", "Munich", "Other St 456",
+                "ACME Corp", 0, "Garage", 0, 0, "IT", "DE123456789", "ACME Delivery",
+                "Shipping", "Handle with care", 150.0, 0, 0, 1000.0, 0, "DEUTDEFF",
+                1, 2, "2024-12-31", 1, 1, 1, 1, 1, 1, 1, 1, 0, 1]
 
-    def test_user_info_model(self):
-        """Test UserInfo model creation with new structure."""
-        user_data = {
-            "id": "user_123",
-            "username": "testuser",
-            "email": "test@example.com",
-            "first_name": "John",
-            "last_name": "Doe",
-            "authentication_state": "AUTH",
-            "opener": "Herr",
-            "role": 0,
-            "debug_level": 1,
-            "phone": "+49123456789",
-            "country": "DE",
-            "city": "Berlin",
-            "is_active": True,
-            "pcgif_version": "1.0",
-            "shop_version": "2.1",
-        }
-        user = UserInfo(**user_data)
-        assert user.id == "user_123"
-        assert user.username == "testuser"
-        assert user.email == "test@example.com"
-        assert user.first_name == "John"
-        assert user.last_name == "Doe"
-        assert user.authentication_state == "AUTH"
-        assert user.opener == "Herr"
-        assert user.role == 0
-        assert user.debug_level == 1
-        assert user.phone == "+49123456789"
-        assert user.country == "DE"
-        assert user.city == "Berlin"
-        assert user.is_active is True
-        assert user.pcgif_version == "1.0"
-        assert user.shop_version == "2.1"
+        user_info = UserInfo.from_data_list_entry(data)
 
-    def test_user_info_model_defaults(self):
-        """Test UserInfo model with default values."""
-        user = UserInfo()
-        assert user.id is None
-        assert user.username is None
-        assert user.email is None
-        assert user.first_name is None
-        assert user.last_name is None
-        assert user.authentication_state is None
-        assert user.opener is None
-        assert user.role is None
-        assert user.debug_level is None
-        assert user.phone is None
-        assert user.country is None
-        assert user.city is None
-        assert user.is_active is True  # Default is True
-        assert user.pcgif_version is None
-        assert user.shop_version is None
+        assert user_info.authentication_state == "AUTH"
+        assert user_info.user_id == 123
+        assert user_info.opener == "Dear"
+        assert user_info.firstname == "John"
+        assert user_info.lastname == "Smith"
 
-    def test_user_info_from_api_array_complete(self):
-        """Test UserInfo.from_api_array with complete data."""
-        # Based on scraped API documentation format
-        api_data = [
-            "AUTH",  # Position 1: authentication_state
-            12345,  # Position 2: id
-            "Herr",  # Position 3: opener
-            "Max",  # Position 4: first_name
-            "Mustermann",  # Position 5: last_name
-            0,  # Position 6: role (0=customer)
-            1,  # Position 7: debug_level
-            0,  # Position 8: driver_load
-            0,  # Position 9: driver_serve
-            0,  # Position 10: driver_next
-            0,  # Position 11: driver_next_load
-            0,  # Position 12: driver_tracking
-            1,  # Position 13: pref_asdc
-            "max@example.com",  # Position 14: email
-            "backup@example.com",  # Position 15: email1
-            "+49301234567",  # Position 16: phone
-            "+491701234567",  # Position 17: phone1
-            "DE",  # Position 18: country
-            "10115",  # Position 19: zip
-            "Berlin",  # Position 20: city
-            "Under den Linden 1",  # Position 21: street
+    def test_xunit_model_creation(self):
+        """Test XUnit model creation from data list entry."""
+        data = [1, "piece", "1", "S", 1, "1"]
+
+        xunit = XUnit.from_data_list_entry(data)
+
+        assert xunit.item_id == 1
+        assert xunit.name == "piece"
+        assert xunit.parts == "1"
+        assert xunit.type == "S"
+        assert xunit.unit_id == 1
+        assert xunit.preferred == "1"
+
+
+class TestParseDataListResponse:
+    """Test the parse_data_list_response function."""
+
+    def test_parse_simple_response(self):
+        """Test parsing a simple DataList response."""
+        response_data = [
+            {
+                "type": "Group",
+                "data": [
+                    [1, "Fruits", "Fresh fruits", 25, 5, "bio", 1, 1],
+                    [2, "Vegetables", "Fresh vegetables", 30, 8, "organic", 0, 1],
+                    [0],  # Terminating entry
+                ],
+            }
         ]
 
-        user = UserInfo.from_api_array(api_data)
+        result = parse_data_list_response(response_data)
 
-        assert user.authentication_state == "AUTH"
-        assert user.id == "12345"
-        assert user.opener == "Herr"
-        assert user.first_name == "Max"
-        assert user.last_name == "Mustermann"
-        assert user.role == 0
-        assert user.debug_level == 1
-        assert user.email == "max@example.com"
-        assert user.email1 == "backup@example.com"
-        assert user.phone == "+49301234567"
-        assert user.phone1 == "+491701234567"
-        assert user.country == "DE"
-        assert user.zip == "10115"
-        assert user.city == "Berlin"
-        assert user.street == "Under den Linden 1"
-        assert user.username == "max@example.com"  # Derived from email
-        assert user.is_active is True  # AUTH state means active
+        assert len(result) == 2
+        assert all(isinstance(item, Group) for item in result)
+        assert result[0].id == 1
+        assert result[0].name == "Fruits"
+        assert result[1].id == 2
+        assert result[1].name == "Vegetables"
 
-    def test_user_info_from_api_array_minimal(self):
-        """Test UserInfo.from_api_array with minimal data."""
-        api_data = ["VALID", 42]  # Just auth state and ID
-
-        user = UserInfo.from_api_array(api_data)
-
-        assert user.authentication_state == "VALID"
-        assert user.id == "42"
-        assert user.first_name is None
-        assert user.email is None
-        assert user.username == "42"  # Derived from ID
-        assert user.is_active is True  # VALID state means active
-
-    def test_user_info_from_api_array_empty(self):
-        """Test UserInfo.from_api_array with empty data."""
-        user = UserInfo.from_api_array([])
-
-        assert user.authentication_state is None
-        assert user.id is None
-        assert user.username is None
-        assert user.is_active is True  # Default value
-
-    def test_user_info_authentication_states(self):
-        """Test different authentication states affect is_active."""
-        test_cases = [
-            (["NONE"], False),  # Not authenticated
-            (["INVALID"], False),  # Invalid cookie
-            (["VALID", 123], True),  # Valid but not logged in
-            (["AUTH", 456], True),  # Authenticated
-            (["SUPER", 789], True),  # Super user
-            (["ADMIN", 999], True),  # Administrator
+    def test_parse_mixed_types_response(self):
+        """Test parsing response with multiple object types."""
+        response_data = [
+            {
+                "type": "Group",
+                "data": [
+                    [1, "Fruits", "Fresh fruits", 25, 5, "bio", 1, 1],
+                    [0],
+                ],
+            },
+            {
+                "type": "Item",
+                "data": [
+                    [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0],
+                    [0],
+                ],
+            }
         ]
 
-        for api_data, expected_active in test_cases:
-            user = UserInfo.from_api_array(api_data)
-            assert user.is_active == expected_active
+        result = parse_data_list_response(response_data)
 
-    def test_customer_info_model(self):
-        """Test CustomerInfo model creation."""
-        user_info = UserInfo(username="testuser", email="test@example.com")
-        customer_data = {
-            "id": "customer_123",
-            "user_info": user_info,
-        }
-        customer = CustomerInfo(**customer_data)
-        assert customer.id == "customer_123"
-        assert customer.user_info.username == "testuser"
-        assert customer.user_info.email == "test@example.com"
-        assert customer.address is None
+        assert len(result) == 2
+        groups = [r for r in result if isinstance(r, Group)]
+        items = [r for r in result if isinstance(r, Item)]
+        assert len(groups) == 1
+        assert len(items) == 1
 
-    def test_group_model(self):
-        """Test Group model creation."""
-        group_data = {
-            "id": "group_1",
-            "name": "Fruits",
-            "info": "Fresh organic fruits",
-            "count": 25,
-        }
-        group = Group(**group_data)
-        assert group.id == "group_1"
-        assert group.name == "Fruits"
-        assert group.info == "Fresh organic fruits"
-        assert group.count == 25
+    def test_parse_empty_response(self):
+        """Test parsing empty response."""
+        response_data = []
+        result = parse_data_list_response(response_data)
+        assert result == []
 
-    def test_subgroup_model(self):
-        """Test SubGroup model creation."""
-        subgroup_data = {
-            "id": "subgroup_1",
-            "name": "Apples",
-            "parent_id": "group_1",
-            "count": 5,
-        }
-        subgroup = SubGroup(**subgroup_data)
-        assert subgroup.id == "subgroup_1"
-        assert subgroup.name == "Apples"
-        assert subgroup.parent_id == "group_1"
-        assert subgroup.count == 5
+    def test_parse_unknown_type(self):
+        """Test parsing response with unknown object type."""
+        response_data = [
+            {
+                "type": "UnknownType",
+                "data": [
+                    [1, "Some data"],
+                    [0],
+                ],
+            }
+        ]
 
-    def test_item_model(self):
-        """Test Item model creation."""
-        item_data = {
-            "id": "item_123",
-            "name": "Organic Apples",
-            "price": 3.99,
-            "description": "Fresh organic apples",
-            "group_id": "group_1",
-            "subgroup_id": "subgroup_1",
-            "unit": "kg",
-            "is_available": True,
-            "image_url": "https://example.com/apple.jpg",
-        }
-        item = Item(**item_data)
-        assert item.id == "item_123"
-        assert item.name == "Organic Apples"
-        assert item.price == 3.99
-        assert item.description == "Fresh organic apples"
-        assert item.group_id == "group_1"
-        assert item.subgroup_id == "subgroup_1"
-        assert item.unit == "kg"
-        assert item.is_available is True
-        assert item.image_url == "https://example.com/apple.jpg"
+        result = parse_data_list_response(response_data)
+        # Unknown types should be skipped
+        assert result == []
 
-    def test_cart_item_model(self):
-        """Test CartItem model creation."""
-        cart_item_data = {
-            "item_id": "item_123",
-            "quantity": 2.5,
-            "unit": "kg",
-            "price": 3.99,
-            "unit_price": 3.99,
-            "total_price": 9.98,
-            "note": "Extra ripe please",
-        }
-        cart_item = CartItem(**cart_item_data)
-        assert cart_item.item_id == "item_123"
-        assert cart_item.quantity == 2.5
-        assert cart_item.unit == "kg"
-        assert cart_item.price == 3.99
-        assert cart_item.unit_price == 3.99
-        assert cart_item.total_price == 9.98
-        assert cart_item.note == "Extra ripe please"
+    def test_parse_malformed_response(self):
+        """Test parsing malformed response data."""
+        response_data = [
+            "not_a_dict",
+            {"no_type_field": True},
+            {
+                "type": "Foo",
+                "data": [
+                    "malformed_data_entry",
+                    [0],
+                ],
+            }
+        ]
 
-    def test_ddate_model(self):
-        """Test DDate model creation."""
-        delivery_date = datetime(2023, 12, 25, 10, 0, 0)
-        ddate_data = {
-            "date": delivery_date,
-            "is_available": True,
-            "delivery_slots": ["10:00-12:00", "14:00-16:00"],
-        }
-        ddate = DDate(**ddate_data)
-        assert ddate.date == delivery_date
-        assert ddate.is_available is True
-        assert ddate.delivery_slots == ["10:00-12:00", "14:00-16:00"]
+        result = parse_data_list_response(response_data)
+        # Malformed entries should be skipped gracefully
+        assert result == []
 
-    def test_subscription_model(self):
-        """Test Subscription model creation."""
-        next_delivery = date(2023, 12, 25)
-        subscription_data = {
-            "id": "sub_123",
-            "customer_id": "customer_123",
-            "frequency": "weekly",
-            "is_active": True,
-            "next_delivery": next_delivery,
-        }
-        subscription = Subscription(**subscription_data)
-        assert subscription.id == "sub_123"
-        assert subscription.customer_id == "customer_123"
-        assert subscription.frequency == "weekly"
-        assert subscription.is_active is True
-        assert subscription.next_delivery == next_delivery
+    def test_model_registry_completeness(self):
+        """Test that MODEL_REGISTRY contains expected models."""
+        expected_models = [
+            "Address", "Item", "Group", "Order", "UserInfo", "XUnit",
+            "Tour", "DDate", "Delivery", "Subscription", "CartItem"
+        ]
 
-    def test_favourite_model(self):
-        """Test Favourite model creation."""
-        favourite_data = {
-            "customer_id": "customer_123",
-            "item_id": "item_123",
-        }
-        favourite = Favourite(**favourite_data)
-        assert favourite.customer_id == "customer_123"
-        assert favourite.item_id == "item_123"
+        for model_name in expected_models:
+            assert model_name in MODEL_REGISTRY, f"Missing {model_name} in MODEL_REGISTRY"
 
-    def test_order_model(self):
-        """Test Order model creation."""
-        delivery_date = date(2023, 12, 25)
-        cart_item = CartItem(item_id="item_123", quantity=2.0)
-        order_data = {
-            "id": "order_123",
-            "customer_id": "customer_123",
-            "delivery_date": delivery_date,
-            "status": "confirmed",
-            "total": 19.98,
-            "items": [cart_item],
-        }
-        order = Order(**order_data)
-        assert order.id == "order_123"
-        assert order.customer_id == "customer_123"
-        assert order.delivery_date == delivery_date
-        assert order.status == "confirmed"
-        assert order.total == 19.98
-        assert len(order.items) == 1
-        assert order.items[0].item_id == "item_123"
+    def test_datalist_response_structure(self):
+        """Test DataListResponse structure."""
+        response = DataListResponse(
+            type="Group",
+            version=1,
+            cnt=2,
+            data=[[1, "Test"], [2, "Another"]]
+        )
 
-    def test_delivery_state_enum(self):
-        """Test DeliveryState enum values."""
-        assert DeliveryState.PENDING == "pending"
-        assert DeliveryState.CONFIRMED == "confirmed"
-        assert DeliveryState.IN_TRANSIT == "in_transit"
-        assert DeliveryState.DELIVERED == "delivered"
-        assert DeliveryState.CANCELLED == "cancelled"
-
-    def test_delivery_model(self):
-        """Test Delivery model creation."""
-        delivery_date = date(2023, 12, 25)
-        address = Address(street="123 Main St", city="Berlin")
-        delivery_data = {
-            "id": "delivery_123",
-            "order_id": "order_123",
-            "delivery_date": delivery_date,
-            "state": DeliveryState.CONFIRMED,
-            "address": address,
-        }
-        delivery = Delivery(**delivery_data)
-        assert delivery.id == "delivery_123"
-        assert delivery.order_id == "order_123"
-        assert delivery.delivery_date == delivery_date
-        assert delivery.state == DeliveryState.CONFIRMED
-        assert delivery.address.street == "123 Main St"
-
-    def test_api_response_model(self):
-        """Test APIResponse model creation."""
-        response_data = {
-            "action": "login",
-            "result": "ok",
-            "data": {"user_id": "123"},
-        }
-        response = APIResponse(**response_data)
-        assert response.action == "login"
-        assert response.result == "ok"
-        assert response.data == {"user_id": "123"}
-
-    def test_model_validation_errors(self):
-        """Test that models raise validation errors for invalid data."""
-        # Test missing required fields
-        with pytest.raises(ValidationError):
-            Shop(name="Test Shop")  # Missing id, latitude, longitude
-
-        with pytest.raises(ValidationError):
-            Group(name="Test Group")  # Missing id
-
-        with pytest.raises(ValidationError):
-            CartItem()  # Missing item_id
-
-    def test_model_serialization(self):
-        """Test that models can be serialized to dict."""
-        shop = Shop(id="test_shop", name="Test Shop", latitude=52.0, longitude=13.0)
-        shop_dict = shop.model_dump()
-        assert shop_dict["id"] == "test_shop"
-        assert shop_dict["name"] == "Test Shop"
-        assert shop_dict["latitude"] == 52.0
-        assert shop_dict["longitude"] == 13.0
-        assert shop_dict["delivery_lat"] is None
-        assert shop_dict["delivery_lng"] is None
+        assert response.type == "Group"
+        assert response.version == 1
+        assert response.cnt == 2
+        assert len(response.data) == 2

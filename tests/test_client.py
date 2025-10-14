@@ -9,10 +9,21 @@ from pyoekoboxonline.exceptions import (
     OekoboxAPIError,
     OekoboxAuthenticationError,
     OekoboxConnectionError,
+    OekoboxValidationError,
 )
 from pyoekoboxonline.models import (
-    CustomerInfo,
+    Group,
+    SubGroup,
+    Item,
+    Order,
     UserInfo,
+    Shop,
+    ShopUrl,
+    Tour,
+    DDate,
+    Delivery,
+    Address,
+    XUnit,
 )
 
 
@@ -156,42 +167,8 @@ class TestOekoboxClient:
         )
 
         async with OekoboxClient("test_shop", "user", "pass") as client:
-            with pytest.raises(OekoboxConnectionError, match="Connection error"):
+            with pytest.raises(OekoboxConnectionError, match="Request failed"):
                 await client._request("GET", "http://example.com/api/test")
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_request_api_error_result(self):
-        """Test API-level error result handling."""
-        respx.get("http://example.com/api/test").mock(
-            return_value=httpx.Response(200, json={"result": "no_such_user"})
-        )
-
-        async with OekoboxClient("test_shop", "user", "pass") as client:
-            with pytest.raises(
-                OekoboxAuthenticationError, match="Authentication failed: no_such_user"
-            ):
-                await client._request("GET", "http://example.com/api/test")
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_get_available_shops(self):
-        """Test getting available shops."""
-        mock_response = """[52.520008,13.404954,"Organic Market Berlin",52.530008,13.414954,"berlin_market"]
-[48.137154,11.576124,"Munich Organic",48.147154,11.586124,"munich_organic"]"""
-
-        respx.get("https://oekobox-online.eu/v3/shoplist.js.jsp").mock(
-            return_value=httpx.Response(200, text=mock_response)
-        )
-
-        shops = await OekoboxClient.get_available_shops()
-        assert len(shops) == 2
-        assert shops[0].id == "berlin_market"
-        assert shops[0].name == "Organic Market Berlin"
-        assert shops[0].latitude == 52.520008
-        assert shops[0].longitude == 13.404954
-        assert shops[0].delivery_lat == 52.530008
-        assert shops[0].delivery_lng == 13.414954
 
     @pytest.mark.asyncio
     @respx.mock
@@ -201,7 +178,6 @@ class TestOekoboxClient:
             return_value=httpx.Response(
                 200,
                 json={
-                    "action": "Logon",
                     "result": "ok",
                     "pcgifversion": "1.0",
                     "shopversion": "2.1",
@@ -210,11 +186,10 @@ class TestOekoboxClient:
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            user_info = await client.logon()
-            assert isinstance(user_info, UserInfo)
-            assert user_info.username == "testuser"
-            assert user_info.pcgif_version == "1.0"
-            assert user_info.shop_version == "2.1"
+            response = await client.logon()
+            assert response["result"] == "ok"
+            assert response["pcgifversion"] == "1.0"
+            assert response["shopversion"] == "2.1"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -222,14 +197,14 @@ class TestOekoboxClient:
         """Test logon failure."""
         respx.get("https://oekobox-online.de/v3/shop/test_shop/api/logon").mock(
             return_value=httpx.Response(
-                200, json={"action": "Logon", "result": "wrong_password"}
+                200, json={"result": "wrong_password"}
             )
         )
 
         async with OekoboxClient("test_shop", "testuser", "wrongpass") as client:
             with pytest.raises(
                 OekoboxAuthenticationError,
-                match="Authentication failed: wrong_password",
+                match="Wrong password",
             ):
                 await client.logon()
 
@@ -243,7 +218,8 @@ class TestOekoboxClient:
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
             client.session_id = "test_session"
-            await client.logout()
+            response = await client.logout()
+            assert response["result"] == "ok"
             assert client.session_id is None
 
     @pytest.mark.asyncio
@@ -254,23 +230,24 @@ class TestOekoboxClient:
             {
                 "type": "Group",
                 "data": [
-                    [1, "Fruits", "Fresh fruits", 25],
-                    [2, "Vegetables", "Fresh vegetables", 30],
+                    [1, "Fruits", "Fresh fruits", 25, 5, "bio,organic", 1, 1],
+                    [2, "Vegetables", "Fresh vegetables", 30, 8, "regional", 0, 1],
                     [0],  # Terminating entry
                 ],
             }
         ]
 
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/groups2").mock(
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/groups").mock(
             return_value=httpx.Response(200, json=mock_response)
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
             groups = await client.get_groups()
             assert len(groups) == 2
-            assert groups[0].id == "1"
+            assert isinstance(groups[0], Group)
+            assert groups[0].id == 1
             assert groups[0].name == "Fruits"
-            assert groups[0].info == "Fresh fruits"
+            assert groups[0].infotext == "Fresh fruits"
             assert groups[0].count == 25
 
     @pytest.mark.asyncio
@@ -278,106 +255,266 @@ class TestOekoboxClient:
     async def test_get_subgroups(self):
         """Test getting product subgroups."""
         mock_response = [
-            {"type": "Group", "data": []},
             {
                 "type": "SubGroup",
                 "data": [
-                    [1, "Apples", "1", 5],
-                    [2, "Bananas", "1", 3],
+                    [1, "Apples", 1],
+                    [2, "Bananas", 1],
                     [0],  # Terminating entry
                 ],
             },
         ]
 
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/groups2").mock(
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/subgroup").mock(
             return_value=httpx.Response(200, json=mock_response)
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
             subgroups = await client.get_subgroups()
             assert len(subgroups) == 2
-            assert subgroups[0].id == "1"
+            assert isinstance(subgroups[0], SubGroup)
+            assert subgroups[0].id == 1
             assert subgroups[0].name == "Apples"
-            assert subgroups[0].parent_id == "1"
-            assert subgroups[0].count == 5
+            assert subgroups[0].parent_group_id == 1
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_user_info_success(self):
-        """Test successful get_user_info with complete API response."""
-        # Mock response based on scraped API documentation
+    async def test_get_items(self):
+        """Test getting items."""
         mock_response = [
             {
-                "type": "UserInfo",
-                "version": 4,
+                "type": "Item",
                 "data": [
-                    [
-                        "AUTH",
-                        12345,
-                        "Herr",
-                        "Max",
-                        "Mustermann",
-                        0,
-                        1,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        1,
-                        "max.mustermann@email.com",
-                        "backup@email.com",
-                        "+49301234567",
-                        "+491701234567",
-                        "DE",
-                        "10115",
-                        "Berlin",
-                        "Under den Linden 1",
-                    ],
-                    [0],  # Version info
+                    [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0],
+                    [2, "Banana", 1.80, "kg", "Yellow bananas", 1, 7.0],
+                    [0],  # Terminating entry
                 ],
-            },
-            {"type": "SomeOtherType", "data": [["other", "data"]]},
+            }
         ]
 
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/user20").mock(
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/items").mock(
             return_value=httpx.Response(200, json=mock_response)
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            user_info = await client.get_user_info()
-
-            assert isinstance(user_info, UserInfo)
-            assert user_info.authentication_state == "AUTH"
-            assert user_info.id == "12345"
-            assert user_info.opener == "Herr"
-            assert user_info.first_name == "Max"
-            assert user_info.last_name == "Mustermann"
-            assert user_info.role == 0
-            assert user_info.debug_level == 1
-            assert user_info.email == "max.mustermann@email.com"
-            assert user_info.email1 == "backup@email.com"
-            assert user_info.phone == "+49301234567"
-            assert user_info.phone1 == "+491701234567"
-            assert user_info.country == "DE"
-            assert user_info.zip == "10115"
-            assert user_info.city == "Berlin"
-            assert user_info.street == "Under den Linden 1"
-            assert (
-                user_info.username == "max.mustermann@email.com"
-            )  # Derived from email
-            assert user_info.is_active is True
+            items = await client.get_items()
+            assert len(items) == 2
+            assert isinstance(items[0], Item)
+            assert items[0].id == 1
+            assert items[0].name == "Apple"
+            assert items[0].price == 2.50
+            assert items[0].unit == "kg"
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_user_info_minimal_response(self):
-        """Test get_user_info with minimal API response."""
+    async def test_get_item(self):
+        """Test getting a specific item."""
+        mock_response = [
+            {
+                "type": "Item",
+                "data": [
+                    [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0],
+                    [0],  # Terminating entry
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/item/1").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            items = await client.get_item(1)
+            assert len(items) == 1
+            assert isinstance(items[0], Item)
+            assert items[0].id == 1
+            assert items[0].name == "Apple"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_itemlist(self):
+        """Test getting item list."""
+        mock_response = [
+            {
+                "type": "Item",
+                "data": [
+                    [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0],
+                    [2, "Banana", 1.80, "kg", "Yellow bananas", 1, 7.0],
+                    [0],
+                ],
+            },
+            {
+                "type": "XUnit",
+                "data": [
+                    [1, "piece", "1", "S", 1, "1"],
+                    [2, "piece", "1", "S", 2, "1"],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/itemlist16").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            result = await client.get_itemlist([1, 2])
+            # Should return mixed types: Items and XUnits
+            items = [r for r in result if isinstance(r, Item)]
+            xunits = [r for r in result if isinstance(r, XUnit)]
+            assert len(items) == 2
+            assert len(xunits) == 2
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_add_to_cart(self):
+        """Test adding item to cart."""
+        respx.post("https://oekobox-online.de/v3/shop/test_shop/api/cart/add").mock(
+            return_value=httpx.Response(200, json={"result": "ok", "message": "Item added"})
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            response = await client.add_to_cart(item_id=1, amount=2.0, note="Extra fresh")
+            assert response["result"] == "ok"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_remove_from_cart(self):
+        """Test removing item from cart."""
+        respx.post("https://oekobox-online.de/v3/shop/test_shop/api/cart/remove").mock(
+            return_value=httpx.Response(200, json={"result": "ok", "message": "Item removed"})
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            response = await client.remove_from_cart(item_id=1)
+            assert response["result"] == "ok"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_show_cart(self):
+        """Test showing cart contents."""
+        mock_response = [
+            {
+                "type": "CartItem",
+                "data": [
+                    [1, 2.0, 5.0],
+                    [2, 1.0, 1.8],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/cart/show").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            cart_items = await client.show_cart()
+            assert len(cart_items) == 2
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_orders(self):
+        """Test getting orders."""
+        mock_response = [
+            {
+                "type": "Order",
+                "data": [
+                    [1, "2024-01-15", "0", 1, "Customer note", "Delivery note"],
+                    [2, "2024-01-16", "1", 2, "", "Handle with care"],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/orders").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            orders = await client.get_orders()
+            assert len(orders) == 2
+            assert isinstance(orders[0], Order)
+            assert orders[0].id == 1
+            assert orders[0].ddate == "2024-01-15"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_new_order(self):
+        """Test creating new order."""
+        respx.post("https://oekobox-online.de/v3/shop/test_shop/api/client/neworder").mock(
+            return_value=httpx.Response(200, json={"result": "ok", "order_id": 123})
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            response = await client.new_order(
+                delivery_date="2024-01-20",
+                tour_id=1,
+                customer_note="Please deliver after 5pm"
+            )
+            assert response["result"] == "ok"
+            assert response["order_id"] == 123
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_tour(self):
+        """Test getting tour information."""
+        mock_response = [
+            {
+                "type": "Tour",
+                "data": [
+                    [1, "Morning Route", "Early morning deliveries", "12345,12346", "Handle with care"],
+                    [0],
+                ],
+            },
+            {
+                "type": "DDate",
+                "data": [
+                    [1, 1, "2024-01-15", 3, "2024-01-14", 1, "Pack early", 5, 8],
+                    [0],
+                ],
+            },
+            {
+                "type": "Delivery",
+                "data": [
+                    [1, 100, 0, "", 1, "Ring doorbell", "Use back entrance", "", "BOX001"],
+                    [0],
+                ],
+            },
+            {
+                "type": "Address",
+                "data": [
+                    [100, "", "Smith", "John", "123 Main St", "Berlin", "12345"],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/tour30/1").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            result = await client.get_tour(1)
+            tours = [r for r in result if isinstance(r, Tour)]
+            ddates = [r for r in result if isinstance(r, DDate)]
+            deliveries = [r for r in result if isinstance(r, Delivery)]
+            addresses = [r for r in result if isinstance(r, Address)]
+
+            assert len(tours) == 1
+            assert len(ddates) == 1
+            assert len(deliveries) == 1
+            assert len(addresses) == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_user_info(self):
+        """Test getting user information."""
         mock_response = [
             {
                 "type": "UserInfo",
-                "version": 4,
                 "data": [
-                    ["VALID", 42],  # Just auth state and ID
+                    ["AUTH", 123, "Dear", "John", "Smith", "0", "0", "0", "0", 0],
                     [0],
                 ],
             }
@@ -389,153 +526,92 @@ class TestOekoboxClient:
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
             user_info = await client.get_user_info()
-
-            assert user_info.authentication_state == "VALID"
-            assert user_info.id == "42"
-            assert user_info.username == "42"  # Derived from ID
-            assert user_info.is_active is True
-            assert user_info.email is None
-            assert user_info.first_name is None
+            assert len(user_info) == 1
+            assert isinstance(user_info[0], UserInfo)
+            assert user_info[0].authentication_state == "AUTH"
+            assert user_info[0].user_id == 123
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_user_info_single_object_response(self):
-        """Test get_user_info with single UserInfo object response format."""
-        mock_response = {
-            "type": "UserInfo",
-            "version": 4,
-            "data": [
-                [
-                    "AUTH",
-                    999,
-                    "Dr.",
-                    "Jane",
-                    "Smith",
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    "jane.smith@example.com",
-                    "",
-                    "+49123456789",
-                    "",
-                    "DE",
-                    "12345",
-                    "Munich",
-                    "Hauptstraße 10",
+    async def test_search(self):
+        """Test search functionality."""
+        mock_response = [
+            {
+                "type": "Item",
+                "data": [
+                    [1, "Apple Juice", 3.50, "bottle", "Organic apple juice", 2, 7.0],
+                    [0],
                 ],
-                [0],
-            ],
-        }
-
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/user20").mock(
-            return_value=httpx.Response(200, json=mock_response)
-        )
-
-        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            user_info = await client.get_user_info()
-
-            assert user_info.authentication_state == "AUTH"
-            assert user_info.id == "999"
-            assert user_info.opener == "Dr."
-            assert user_info.first_name == "Jane"
-            assert user_info.last_name == "Smith"
-            assert user_info.role == 1  # Web-Admin
-            assert user_info.email == "jane.smith@example.com"
-            assert user_info.phone == "+49123456789"
-            assert user_info.country == "DE"
-            assert user_info.city == "Munich"
-            assert user_info.street == "Hauptstraße 10"
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_get_user_info_no_userinfo_in_response(self):
-        """Test get_user_info fallback when no UserInfo found in response."""
-        mock_response = [{"type": "SomeOtherType", "data": [["other", "data"]]}]
-
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/user20").mock(
-            return_value=httpx.Response(200, json=mock_response)
-        )
-
-        async with OekoboxClient(
-            "test_shop", "testuser@example.com", "testpass"
-        ) as client:
-            user_info = await client.get_user_info()
-
-            # Should return fallback UserInfo
-            assert user_info.username == "testuser@example.com"
-            assert user_info.email == "testuser@example.com"
-            assert user_info.is_active is True
-            assert user_info.authentication_state is None
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_get_user_info_authentication_states(self):
-        """Test different authentication states in get_user_info."""
-        test_cases = [
-            ("NONE", False),
-            ("INVALID", False),
-            ("VALID", True),
-            ("AUTH", True),
-            ("SUPER", True),
-            ("ADMIN", True),
+            }
         ]
 
-        for auth_state, expected_active in test_cases:
-            mock_response = [
-                {
-                    "type": "UserInfo",
-                    "data": [[auth_state, 123, "Test", "User", "Name"]],
-                }
-            ]
-
-            respx.get("https://oekobox-online.de/v3/shop/test_shop/api/user20").mock(
-                return_value=httpx.Response(200, json=mock_response)
-            )
-
-            async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-                user_info = await client.get_user_info()
-                assert user_info.authentication_state == auth_state
-                assert user_info.is_active == expected_active
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_get_user_info_validation_error(self):
-        """Test get_user_info handles validation errors properly."""
-        # Mock response with invalid JSON - this will be handled gracefully by _request
-        mock_response = "invalid json"
-
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/user20").mock(
-            return_value=httpx.Response(
-                200, text=mock_response, headers={"content-type": "text/plain"}
-            )
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/search").mock(
+            return_value=httpx.Response(200, json=mock_response)
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            # The method should return a fallback UserInfo when it can't parse the response
-            user_info = await client.get_user_info()
-
-            # Should return fallback UserInfo with basic credentials
-            assert isinstance(user_info, UserInfo)
-            assert user_info.username == "testuser"
-            assert user_info.is_active is True
-            assert user_info.authentication_state is None
+            results = await client.search("apple")
+            assert len(results) == 1
+            assert isinstance(results[0], Item)
+            assert "Apple" in results[0].name
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_customer_info(self):
-        """Test get_customer_info method."""
-        async with OekoboxClient(
-            "test_shop", "testuser@example.com", "testpass"
-        ) as client:
-            customer_info = await client.get_customer_info()
+    async def test_find_shop(self):
+        """Test finding shops by location."""
+        mock_response = [{ "type":"ShopUrl", "version":"4", "data":[
+            ["Organic Market Berlin", "http://example.com", "http://example.com", "http://example.com", "", "berlin", 0, 52.530008, 13.414954, 1],
+            ["Munich Organic", "http://example.com", "http://example.com", "http://example.com", "", "munich",0,  48.147154, 11.586124, 1]
+                           ]}]
 
-            assert isinstance(customer_info, CustomerInfo)
-            assert customer_info.id == "testuser@example.com"
-            assert customer_info.user_info.username == "testuser@example.com"
-            assert customer_info.user_info.email == "testuser@example.com"
-            assert customer_info.address is None
+        respx.get("https://oekobox-online.de/v3/findshop").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            shops = await client.find_shop(52.5, 13.4)
+            assert len(shops) == 2
+            assert isinstance(shops[0], ShopUrl)
+            assert shops[0].lat == 52.530008
+            assert shops[0].lng == 13.414954
+            assert shops[0].display_name == "Organic Market Berlin"
+            assert shops[0].sysname == "berlin"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_api_request_with_datalist_response(self):
+        """Test _api_request method with DataList response."""
+        mock_response = [
+            {
+                "type": "Group",
+                "data": [
+                    [1, "Test Group", "Description", 10],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/test").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            result = await client._api_request("test")
+            assert len(result) == 1
+            assert isinstance(result[0], Group)
+            assert result[0].id == 1
+            assert result[0].name == "Test Group"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_api_request_with_non_list_response(self):
+        """Test _api_request method with non-list response."""
+        mock_response = {"result": "ok", "message": "Success"}
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/test").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            result = await client._api_request("test")
+            assert result == mock_response
