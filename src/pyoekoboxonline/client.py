@@ -1,5 +1,6 @@
 """Main client for the Ökobox Online API."""
 
+import datetime
 import logging
 import re
 from typing import Any, TypeVar
@@ -15,11 +16,13 @@ from .exceptions import (
 from .models import (
     Address,
     AuxDate,
+    Box,
     DDate,
     Delivery,
     DeliveryState,
     DeselectedGroup,
     DeselectedItem,
+    Discount,
     Favourite,
     Group,
     Item,
@@ -195,14 +198,18 @@ class OekoboxClient:
             response.raise_for_status()
 
         except httpx.HTTPStatusError as e:
+            server_error = e.response.headers.get("X-oekobox-error", None)
+
             if e.response.status_code == 401:
                 raise OekoboxAuthenticationError(
                     f"HTTP {e.response.status_code}: Authentication failed",
+                    server_error,
                     e.response.status_code,
                 ) from e
             elif e.response.status_code == 403:
                 raise OekoboxAuthenticationError(
                     f"HTTP {e.response.status_code}: Access forbidden",
+                    server_error,
                     e.response.status_code,
                 ) from e
             else:
@@ -215,6 +222,7 @@ class OekoboxClient:
 
                 raise OekoboxAPIError(
                     f"HTTP {e.response.status_code}: {error_msg}",
+                    server_error,
                     e.response.status_code,
                 ) from e
 
@@ -267,7 +275,7 @@ class OekoboxClient:
             params["pass"] = self.password
 
         response = await self._request(
-            "GET", f"{self.api_base_url}/logon", params=params
+            "GET", f"{self.api_base_url}/logon2", params=params
         )
 
         # Ensure response is a dict for logon operations
@@ -883,17 +891,37 @@ class OekoboxClient:
         return response
 
     # User Profile Methods
-    async def get_user_info(self) -> list[UserInfo]:
+    async def get_user_info(self) -> list[UserInfo | Tour | Address | Box | Discount]:
         """
-        Get current user information.
+        Provides Userinfo, see API.objects.UserInfo, and related tour and address information.
+
+        This call can be used to embed user information into calling pages.
+        Newer versions provide also Tour Information for tours of the calling user.
+
+        user1: adds Role to the UserInfo object V2
+        user2: since 6.11.14: , new UserInfo Object V3 with debug level, also use the common response in array form, responses are compressed if they exceed a certain size
+        user3: since 19.4.15: new UserInfo Object V4, adding driver related information
+        user4: since 15.7.15: new UserInfo Object V5, adding more driver related information
+        user5: since 9.9.15: new UserInfo Object V6, adding more driver related information
+        user6: since 16.10.15: new UserInfo Object V7, adding more driver related information
+        user7: since 4/16: new UserInfo Object V8, adds address information
+        user8: since 9/16: adds Tour objects for all tours that this user is assigned to
+        user10: adds user preferences
+        user11: adds company and dept
+        user12: adds Address-Objects
+        user13: adds driver notes
+        user14: adds hidden tourinfo
+        user15: the Address-List will contain now also all related (depot/delivery) addresses.
+        user16: adds individual Discount-information
+        user20: UserInfo V16, adds Limit infos, activity info and box count
 
         Returns:
-            List containing UserInfo object
+            List containing UserInfo, Tour, Address, Box, and Discount objects
         """
         response = await self._api_request("user20")
         return response  # type: ignore[no-any-return]
 
-    async def set_profile(self, profile_data: dict[str, Any]) -> dict[str, Any]:
+    async def set_profile(self, profile_data: dict[str, Any]) -> UserInfo:
         """
         Update user profile information.
 
@@ -907,13 +935,12 @@ class OekoboxClient:
             "POST", f"{self.api_base_url}/client/setprofile", data=profile_data
         )
 
-        # Ensure response is a dict for cart operations
         if not isinstance(response, dict):
             raise OekoboxValidationError(
                 "Expected dict response from profile operation"
             )
 
-        return response
+        return parse_data_list_response([{"type": "UserInfo", "data": response}])[0]  # type: ignore[no-any-return]
 
     async def change_password(
         self, old_password: str, new_password: str
@@ -936,13 +963,55 @@ class OekoboxClient:
             "POST", f"{self.api_base_url}/client/password", data=data
         )
 
-        # Ensure response is a dict for cart operations
         if not isinstance(response, dict):
             raise OekoboxValidationError(
                 "Expected dict response from password operation"
             )
 
         return response
+
+    async def add_pause(
+        self,
+        from_date: datetime.datetime,
+        to_date: datetime.datetime,
+        auto_cancel: bool = False,
+    ) -> list[
+        ShopDate
+        | Pause
+        | Subscription
+        | Favourite
+        | AuxDate
+        | DeselectedItem
+        | DeselectedGroup
+    ]:
+        """
+        Store a new delivery pause to the system.
+
+        Args:
+            from_date: start of the delivery break (datetime)
+            to_date: end of the new break (datetime)
+            auto_cancel: If True, all orders in that timeframe are cancelled, unless there are reasons that this can not be done.
+
+        Returns:
+            A successful response provides all data as the API.methods.dates-call, already updated.
+        """
+        data = {
+            "von": from_date.strftime("%Y-%m-%d"),
+            "bis": to_date.strftime("%Y-%m-%d"),
+        }
+        if auto_cancel:
+            data["autocancel"] = "1"
+
+        response = await self._request(
+            "POST", f"{self.api_base_url}/client/addpause", data=data
+        )
+
+        if not isinstance(response, list):
+            raise OekoboxValidationError(
+                "Expected list response from add pause operation"
+            )
+
+        return parse_data_list_response(response)
 
     # Search Methods
     async def search(self, query: str, limit: int | None = None) -> list[Item]:

@@ -711,13 +711,12 @@ class AuxDate(DataListModel):
 @dataclass
 class Box(DataListModel):
     """
-    Box object representing delivery boxes.
+    Refund Boxes registered for a given user.
     """
 
-    id: int | None = field(default=None, metadata={"description": "Box identifier"})
-    name: str | None = field(default=None, metadata={"description": "Box name or type"})
-    description: str | None = field(
-        default=None, metadata={"description": "Box description"}
+    id: str | None = field(default=None, metadata={"description": "Box id"})
+    since: datetime.datetime | None = field(
+        default=None, metadata={"description": "at customer since"}
     )
 
 
@@ -1106,13 +1105,13 @@ class Pause(DataListModel):
     id: int | None = field(
         default=None, metadata={"description": "referenceable id for this pause record"}
     )
-    start_date: str | None = field(
+    start_date: datetime.date | None = field(
         default=None, metadata={"description": "Pause start date"}
     )
-    end_date: str | None = field(
+    end_date: datetime.date | None = field(
         default=None, metadata={"description": "Pause end date"}
     )
-    dt: str | None = field(
+    dt: datetime.datetime | None = field(
         default=None, metadata={"description": "Date/time when entered"}
     )
     note: str | None = field(default=None, metadata={"description": "arbitrary note"})

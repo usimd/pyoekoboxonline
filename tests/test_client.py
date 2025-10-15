@@ -172,7 +172,7 @@ class TestOekoboxClient:
     @respx.mock
     async def test_logon_success(self):
         """Test successful logon."""
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/logon").mock(
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/logon2").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -193,7 +193,7 @@ class TestOekoboxClient:
     @respx.mock
     async def test_logon_failure(self):
         """Test logon failure."""
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/logon").mock(
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/logon2").mock(
             return_value=httpx.Response(200, json={"result": "wrong_password"})
         )
 
