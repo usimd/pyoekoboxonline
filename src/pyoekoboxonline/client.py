@@ -158,7 +158,6 @@ class OekoboxClient:
                 params=params,
                 data=data,
                 headers=headers,
-                cookies={"OOSESSION": self.session_id} if self.session_id else None,
                 **kwargs,
             )
 
@@ -189,6 +188,9 @@ class OekoboxClient:
                                     f"Session ID extracted from header {cookie_name}: {self.session_id[:10]}..."
                                 )
                                 break
+
+                if self.session_id:
+                    self._client.cookies.update({"OOSESSION": self.session_id})
 
             response.raise_for_status()
 
