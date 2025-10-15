@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
@@ -37,6 +37,8 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class OekoboxClient:
@@ -128,8 +130,8 @@ class OekoboxClient:
         params: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any] | list[dict[str, Any]]:
-        """Make an HTTP request with proper session management.
+    ) -> Any:
+        """Make a raw HTTP request to the API.
 
         According to official API docs, sessions can be maintained via:
         1. Standard cookies (preferred)
@@ -266,6 +268,10 @@ class OekoboxClient:
             "GET", f"{self.api_base_url}/logon", params=params
         )
 
+        # Ensure response is a dict for logon operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from logon endpoint")
+
         # Check logon result
         result = response.get("result")
         if result not in ["ok", "relogon", "guest"]:
@@ -282,7 +288,10 @@ class OekoboxClient:
                 "use_id": "Use customer ID instead of email",
                 "token_session": "Token not created by this session",
             }
-            error_msg = error_messages.get(result, f"Logon failed: {result}")
+            error_msg = error_messages.get(
+                str(result) if result is not None else "unknown",
+                f"Logon failed: {result}",
+            )
             raise OekoboxAuthenticationError(error_msg)
 
         logger.info(f"Successfully logged in with result: {result}")
@@ -296,6 +305,11 @@ class OekoboxClient:
             Logout response
         """
         response = await self._request("GET", f"{self.api_base_url}/logout")
+
+        # Ensure response is a dict for logout operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from logout endpoint")
+
         self.session_id = None
         logger.info("Successfully logged out")
         return response
@@ -308,7 +322,8 @@ class OekoboxClient:
         Returns:
             List of Group objects
         """
-        return await self._api_request("groups")
+        response = await self._api_request("groups")
+        return response  # type: ignore[no-any-return]
 
     async def get_subgroups(self, group_id: int | None = None) -> list[SubGroup]:
         """
@@ -322,8 +337,9 @@ class OekoboxClient:
         """
         params = {}
         if group_id is not None:
-            params["g"] = group_id
-        return await self._api_request("subgroup", params=params)
+            params["g"] = str(group_id)
+        response = await self._api_request("subgroup", params=params)
+        return response  # type: ignore[no-any-return]
 
     async def get_items(
         self,
@@ -350,11 +366,11 @@ class OekoboxClient:
         """
         params = {}
         if group_id is not None:
-            params["g"] = group_id
+            params["g"] = str(group_id)
         if subgroup_id is not None:
-            params["sg"] = subgroup_id
+            params["sg"] = str(subgroup_id)
         if rubric_id is not None:
-            params["r"] = rubric_id
+            params["r"] = str(rubric_id)
         if search:
             params["s"] = search
         if hidden:
@@ -362,7 +378,8 @@ class OekoboxClient:
         if timeless:
             params["timeless"] = "1"
 
-        return await self._api_request("items", params=params)
+        response = await self._api_request("items", params=params)
+        return response  # type: ignore[no-any-return]
 
     async def get_item(self, item_id: int) -> list[Item]:
         """
@@ -374,7 +391,8 @@ class OekoboxClient:
         Returns:
             List containing the Item object
         """
-        return await self._api_request(f"item/{item_id}")
+        response = await self._api_request(f"item/{item_id}")
+        return response  # type: ignore[no-any-return]
 
     async def get_itemlist(
         self,
@@ -396,10 +414,11 @@ class OekoboxClient:
         ids_param = ",".join(map(str, item_ids))
         params: dict[str, Any] = {"i": ids_param}
         if tour_id is not None:
-            params["tourid"] = tour_id
+            params["tourid"] = str(tour_id)
         if order_id is not None:
-            params["oid"] = order_id
-        return await self._api_request("itemlist16", params=params)
+            params["oid"] = str(order_id)
+        response = await self._api_request("itemlist16", params=params)
+        return response  # type: ignore[no-any-return]
 
     # Cart Methods
     async def add_to_cart(
@@ -425,17 +444,25 @@ class OekoboxClient:
         Returns:
             Cart operation response
         """
-        data = {"id": item_id, "amount": amount}
+        data = {"id": str(item_id), "amount": str(amount)}
         if note:
             data["note"] = note
         if repeat:
-            data["repeat"] = repeat
+            data["repeat"] = str(repeat)
         if allow_duplicates:
-            data["ad"] = allow_duplicates
+            data["ad"] = str(allow_duplicates)
         if position is not None:
-            data["pos"] = position
+            data["pos"] = str(position)
 
-        return await self._request("POST", f"{self.api_base_url}/cart/add", data=data)
+        response = await self._request(
+            "POST", f"{self.api_base_url}/cart/add", data=data
+        )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from cart operation")
+
+        return response
 
     async def remove_from_cart(
         self, item_id: int | None = None, position: int | None = None
@@ -456,9 +483,15 @@ class OekoboxClient:
         if position is not None:
             data["pos"] = position
 
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/cart/remove", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from cart operation")
+
+        return response
 
     async def show_cart(self) -> list[Any]:
         """
@@ -467,7 +500,8 @@ class OekoboxClient:
         Returns:
             List of cart items and related data
         """
-        return await self._api_request("cart/show")
+        response = await self._api_request("cart/show")
+        return response  # type: ignore[no-any-return]
 
     async def reset_cart(self) -> dict[str, Any]:
         """
@@ -476,7 +510,13 @@ class OekoboxClient:
         Returns:
             Reset operation response
         """
-        return await self._request("POST", f"{self.api_base_url}/client/resetcart")
+        response = await self._request("POST", f"{self.api_base_url}/client/resetcart")
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from cart operation")
+
+        return response
 
     # Order Methods
     async def get_orders(
@@ -498,13 +538,14 @@ class OekoboxClient:
         """
         params = {}
         if days_past is not None:
-            params["pd"] = days_past
+            params["pd"] = str(days_past)
         if days_ahead is not None:
-            params["ad"] = days_ahead
+            params["ad"] = str(days_ahead)
         if tour_ids is not None:
             params["tours"] = ",".join(map(str, tour_ids))
 
-        return await self._api_request("orders", params=params)
+        response = await self._api_request("orders", params=params)
+        return response  # type: ignore[no-any-return]
 
     async def get_order(self, order_id: int) -> list[Order]:
         """
@@ -516,7 +557,8 @@ class OekoboxClient:
         Returns:
             List containing the Order object
         """
-        return await self._api_request(f"order26/{order_id}")
+        response = await self._api_request(f"order26/{order_id}")
+        return response  # type: ignore[no-any-return]
 
     async def get_order_items(self, order_id: int) -> list[Item | XUnit]:
         """
@@ -528,7 +570,8 @@ class OekoboxClient:
         Returns:
             List of Item and associated XUnit objects
         """
-        return await self._api_request(f"orderitems/{order_id}")
+        response = await self._api_request(f"orderitems/{order_id}")
+        return response  # type: ignore[no-any-return]
 
     async def new_order(
         self,
@@ -551,15 +594,21 @@ class OekoboxClient:
         """
         data = {"ddate": delivery_date}
         if tour_id is not None:
-            data["tour"] = tour_id
+            data["tour"] = str(tour_id)
         if customer_note:
             data["cnote"] = customer_note
         if delivery_note:
             data["rnote"] = delivery_note
 
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/neworder", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from order operation")
+
+        return response
 
     async def cancel_order(self, order_id: int) -> dict[str, Any]:
         """
@@ -571,10 +620,16 @@ class OekoboxClient:
         Returns:
             Cancellation response
         """
-        data = {"order": order_id}
-        return await self._request(
+        data = {"order": str(order_id)}
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/cancelorder", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from order operation")
+
+        return response
 
     async def change_order(
         self,
@@ -595,7 +650,7 @@ class OekoboxClient:
         Returns:
             Change response
         """
-        data = {"order": order_id}
+        data = {"order": str(order_id)}
         if delivery_date:
             data["ddate"] = delivery_date
         if customer_note:
@@ -603,9 +658,15 @@ class OekoboxClient:
         if delivery_note:
             data["rnote"] = delivery_note
 
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/changeorder", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from order operation")
+
+        return response
 
     # Tour and Delivery Methods
     async def get_tour(self, tour_id: int) -> list[Tour | DDate | Delivery | Address]:
@@ -624,7 +685,8 @@ class OekoboxClient:
         Returns:
             A sequence of these objects: Tour, DDate, a list of Deliveries, and a list of Addresses.
         """
-        return await self._api_request(f"tour30/{tour_id}")
+        response = await self._api_request(f"tour30/{tour_id}")
+        return response  # type: ignore[no-any-return]
 
     async def get_dates(
         self,
@@ -643,7 +705,8 @@ class OekoboxClient:
         Returns:
             List of objects of type ShopDate, Pause, Subscription, Favourite, AuxDate, DeselectedItem, or DeselectedGroup
         """
-        return await self._api_request("dates7")
+        response = await self._api_request("dates7")
+        return response  # type: ignore[no-any-return]
 
     async def set_tour(self, tour_id: int) -> dict[str, Any]:
         """
@@ -655,10 +718,16 @@ class OekoboxClient:
         Returns:
             Tour setting response
         """
-        data = {"tour": tour_id}
-        return await self._request(
+        data = {"tour": str(tour_id)}
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/settour", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError("Expected dict response from tour operation")
+
+        return response
 
     async def add_subscription(
         self,
@@ -678,13 +747,21 @@ class OekoboxClient:
             Subscription response
         """
         data = {
-            "item": item_id,
-            "amount": amount,
-            "interval": interval,
+            "item": str(item_id),
+            "amount": str(amount),
+            "interval": str(interval),
         }
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/addsubscription", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from subscription operation"
+            )
+
+        return response
 
     async def change_subscription(
         self,
@@ -703,15 +780,23 @@ class OekoboxClient:
         Returns:
             Change response
         """
-        data = {"subscription": subscription_id}
+        data = {"subscription": str(subscription_id)}
         if amount is not None:
-            data["amount"] = amount
+            data["amount"] = str(amount)
         if interval is not None:
-            data["interval"] = interval
+            data["interval"] = str(interval)
 
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/changesubscription", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from subscription operation"
+            )
+
+        return response
 
     async def drop_subscription(self, subscription_id: int) -> dict[str, Any]:
         """
@@ -723,10 +808,18 @@ class OekoboxClient:
         Returns:
             Cancellation response
         """
-        data = {"subscription": subscription_id}
-        return await self._request(
+        data = {"subscription": str(subscription_id)}
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/dropsubscription", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from subscription operation"
+            )
+
+        return response
 
     # Favourites Methods
     async def get_favourites(self) -> list[Favourite]:
@@ -736,7 +829,8 @@ class OekoboxClient:
         Returns:
             List of Favourite objects
         """
-        return await self._api_request("client/favourites")
+        response = await self._api_request("client/favourites")
+        return response  # type: ignore[no-any-return]
 
     async def add_favourites(self, item_ids: list[int]) -> dict[str, Any]:
         """
@@ -750,9 +844,17 @@ class OekoboxClient:
         """
         ids_param = ",".join(map(str, item_ids))
         data = {"items": ids_param}
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/addfavourites", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from favourites operation"
+            )
+
+        return response
 
     async def drop_favourites(self, item_ids: list[int]) -> dict[str, Any]:
         """
@@ -766,9 +868,17 @@ class OekoboxClient:
         """
         ids_param = ",".join(map(str, item_ids))
         data = {"items": ids_param}
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/dropfavourites", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from favourites operation"
+            )
+
+        return response
 
     # User Profile Methods
     async def get_user_info(self) -> list[UserInfo]:
@@ -778,7 +888,8 @@ class OekoboxClient:
         Returns:
             List containing UserInfo object
         """
-        return await self._api_request("user20")
+        response = await self._api_request("user20")
+        return response  # type: ignore[no-any-return]
 
     async def set_profile(self, profile_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -790,9 +901,17 @@ class OekoboxClient:
         Returns:
             Profile update response
         """
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/setprofile", data=profile_data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from profile operation"
+            )
+
+        return response
 
     async def change_password(
         self, old_password: str, new_password: str
@@ -811,9 +930,17 @@ class OekoboxClient:
             "oldpass": old_password,
             "newpass": new_password,
         }
-        return await self._request(
+        response = await self._request(
             "POST", f"{self.api_base_url}/client/password", data=data
         )
+
+        # Ensure response is a dict for cart operations
+        if not isinstance(response, dict):
+            raise OekoboxValidationError(
+                "Expected dict response from password operation"
+            )
+
+        return response
 
     # Search Methods
     async def search(self, query: str, limit: int | None = None) -> list[Item]:
@@ -829,9 +956,10 @@ class OekoboxClient:
         """
         params = {"q": query}
         if limit is not None:
-            params["limit"] = limit
+            params["limit"] = str(limit)
 
-        return await self._api_request("search", params=params)
+        response = await self._api_request("search", params=params)
+        return response  # type: ignore[no-any-return]
 
     async def get_delivery_state(self) -> list[DeliveryState]:
         """
@@ -842,7 +970,8 @@ class OekoboxClient:
         Returns:
             A API.objects.DeliveryState Object TBD
         """
-        return await self._api_request("client/delivery")
+        response = await self._api_request("client/delivery")
+        return response  # type: ignore[no-any-return]
 
     # Shop Information Methods
     async def get_shop_info(self) -> list[Shop]:
@@ -855,13 +984,14 @@ class OekoboxClient:
         # The shop info endpoint is not part of the standard API, so we fetch it directly.
         # Its response needs to be wrapped in a DataList format to handle it similar to
         # the other models.
+        response_data = await self._request(
+            "GET", "https://oekobox-online.eu/v3/shoplist.js.jsp"
+        )
         return parse_data_list_response(
             [
                 {
                     "type": "Shop",
-                    "data": await self._request(
-                        "GET", "https://oekobox-online.eu/v3/shoplist.js.jsp"
-                    ),
+                    "data": response_data,
                 }
             ]
         )
@@ -878,10 +1008,11 @@ class OekoboxClient:
         Returns:
             List of Shop objects
         """
-        params = {"lat": lat, "lng": lng}
-        return parse_data_list_response(
-            await self._request("GET", "https://oekobox-online.de/v3/findshop", params)
+        params = {"lat": str(lat), "lng": str(lng)}
+        response = await self._request(
+            "GET", "https://oekobox-online.de/v3/findshop", params=params
         )
+        return parse_data_list_response(response)
 
     # Start method - combines authentication with data fetching
     async def start(
@@ -915,4 +1046,5 @@ class OekoboxClient:
         if include_dates:
             params["dates"] = "1"
 
-        return await self._api_request("start", params=params)
+        response = await self._api_request("start", params=params)
+        return response  # type: ignore[no-any-return]

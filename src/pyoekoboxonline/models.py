@@ -26,7 +26,7 @@ class DataListModel:
     """
 
     @classmethod
-    def from_data_list_entry(cls, data: list[Any]):
+    def from_data_list_entry(cls, data: list[Any]) -> DataListModel:
         """
         Create model instance from DataList entry array.
 
@@ -2037,8 +2037,10 @@ def parse_data_list_response(response_data: list[dict[str, Any]]) -> list[Any]:
                 continue
 
             try:
-                model_instance = model_class.from_data_list_entry(data_entry)
-                parsed_objects.append(model_instance)
+                # Type check: ensure model_class has the from_data_list_entry method
+                if hasattr(model_class, "from_data_list_entry"):
+                    model_instance = model_class.from_data_list_entry(data_entry)
+                    parsed_objects.append(model_instance)
             except (IndexError, ValueError, TypeError):
                 # Log error but continue processing other entries
                 continue
