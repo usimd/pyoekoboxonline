@@ -58,7 +58,7 @@ except ImportError:
         "password": os.getenv("OEKOBOX_PASSWORD", ""),
         "base_url": os.getenv("OEKOBOX_BASE_URL", ""),
     }
-    HAS_VALID_CONFIG = all(v for v in TEST_CONFIG.values() if v)
+    HAS_VALID_CONFIG = all(TEST_CONFIG.values())
 
 # Skip all integration tests if no valid configuration
 pytestmark = pytest.mark.skipif(
