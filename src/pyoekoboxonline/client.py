@@ -15,6 +15,7 @@ from .exceptions import (
 )
 from .models import (
     Address,
+    Assortment,
     AuxDate,
     Box,
     DDate,
@@ -209,6 +210,18 @@ class OekoboxClient:
             elif e.response.status_code == 403:
                 raise OekoboxAuthenticationError(
                     f"HTTP {e.response.status_code}: Access forbidden",
+                    server_error,
+                    e.response.status_code,
+                ) from e
+            elif e.response.status_code == 404:
+                raise OekoboxAPIError(
+                    f"HTTP {e.response.status_code}: Not found",
+                    server_error,
+                    e.response.status_code,
+                ) from e
+            elif e.response.status_code == 409:
+                raise OekoboxAPIError(
+                    f"HTTP {e.response.status_code}: Conflict error",
                     server_error,
                     e.response.status_code,
                 ) from e
@@ -718,6 +731,22 @@ class OekoboxClient:
         response = await self._api_request("dates7")
         return response  # type: ignore[no-any-return]
 
+    async def get_assortments(self) -> list[Assortment]:
+        """
+        Provides a List of all available assortments.
+
+        v1, 19.1.14: Content-Type change of response to be "application/json"
+        assortments2, v2, 02.4.14: Add Assortment-Validity time frame to Assortment-Object
+        assortments3, v3, May 2015: Assortment V3 shows the image existence as boolean only
+        assortments4, v4, April 2016 : Assortment V4 adds a total ingredients count
+        assortments4, v5, July 2016 : Assortment V5 adds group and variant references
+        assortments11, 1/25, new object version
+
+        Returns:
+            assortments Objects.
+        """
+        return await self._api_request("assortments4")  # type: ignore[no-any-return]
+
     async def set_tour(self, tour_id: int) -> dict[str, Any]:
         """
         Set preferred delivery tour for the customer.
@@ -996,6 +1025,7 @@ class OekoboxClient:
             A successful response provides all data as the API.methods.dates-call, already updated.
         """
         data = {
+            "BusinessEntity.DATEFORMAT": "iso8601d",
             "von": from_date.strftime("%Y-%m-%d"),
             "bis": to_date.strftime("%Y-%m-%d"),
         }
@@ -1013,21 +1043,59 @@ class OekoboxClient:
 
         return parse_data_list_response(response)
 
+    async def drop_pause(
+        self,
+        pause_id: int,
+    ) -> list[
+        ShopDate
+        | Pause
+        | Subscription
+        | Favourite
+        | AuxDate
+        | DeselectedItem
+        | DeselectedGroup
+    ]:
+        """
+        Remove a pause from the system.
+
+        Args:
+            pause_id: The id of the pausing record, as obtained by a API.methods.dates-call
+
+        Returns:
+            A successful response provides all data as the API.methods.dates-call, already updated.
+        """
+        response = await self._request(
+            "POST", f"{self.api_base_url}/client/droppause", data={"lpid": pause_id}
+        )
+
+        if not isinstance(response, list):
+            raise OekoboxValidationError(
+                "Expected list response from drop pause operation"
+            )
+
+        return parse_data_list_response(response)
+
     # Search Methods
-    async def search(self, query: str, limit: int | None = None) -> list[Item]:
+    async def search(
+        self, query: str, fuzzy: bool = False, limit: int | None = None
+    ) -> list[Item]:
         """
         Search for items.
 
         Args:
             query: Search query string
+            fuzzy: Fuzzy search (based on an adapted soundex)
             limit: Maximum number of results
 
         Returns:
             List of matching Item objects
         """
-        params = {"q": query}
+        params = {"q": query, "fields": "3"}
+        if fuzzy:
+            params["fuzzy"] = "2"
+            params["qe"] = "1"
         if limit is not None:
-            params["limit"] = str(limit)
+            params["max"] = str(limit)
 
         response = await self._api_request("search", params=params)
         return response  # type: ignore[no-any-return]

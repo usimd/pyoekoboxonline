@@ -11,6 +11,8 @@ import pytest
 from pyoekoboxonline.models import (
     MODEL_REGISTRY,
     Address,
+    Assortment,
+    CartItem,
     DataListModel,
     DataListResponse,
     Group,
@@ -117,6 +119,25 @@ class TestDataListModel:
         # Failed conversions should result in None
         assert instance.id is None
         assert instance.price is None
+
+    def test_from_data_list_entry_allows_zero_for_non_id_fields(self):
+        """Test that zero values are allowed for non-id fields (updated in last commit)."""
+
+        @dataclass
+        class TestModel(DataListModel):
+            id: int | None = field(default=None)
+            count: int | None = field(default=None)
+            price: float | None = field(default=None)
+            is_active: bool | None = field(default=None)
+
+        # Data with zeros for non-id fields
+        data = [123, 0, 0.0, 0]
+        instance = TestModel.from_data_list_entry(data)
+
+        assert instance.id == 123
+        assert instance.count == 0  # Should be 0, not None
+        assert instance.price == 0.0  # Should be 0.0, not None
+        assert instance.is_active is False  # Should be False, not None
 
 
 class TestSpecificModels:
@@ -483,3 +504,107 @@ class TestParseDataListResponse:
         assert response.version == 1
         assert response.cnt == 2
         assert len(response.data) == 2
+
+
+class TestAssortmentModel:
+    """Test the updated Assortment model from the last commit."""
+
+    def test_assortment_basic_fields(self):
+        """Test basic Assortment fields."""
+
+        data = [
+            1,
+            "Fruit Box Small",
+            "A small box with seasonal fruits",
+            2,
+            15.99,
+            1,
+            "pic123",
+            "2024-01-01T00:00:00",
+            "2024-12-31T23:59:59",
+            5,
+            10,
+            1,
+            "Perfect for couples",
+            0,
+            1,
+            "thumb123",
+        ]
+
+        assortment = Assortment.from_data_list_entry(data)
+
+        assert assortment.id == 1
+        assert assortment.name == "Fruit Box Small"
+        assert assortment.description == "A small box with seasonal fruits"
+        assert assortment.person_count == 2
+        assert assortment.price == 15.99
+        assert assortment.resolved == 1
+        assert assortment.picture_url == "pic123"
+        assert assortment.item_count == 5
+        assert assortment.group_id == 10
+        assert assortment.variant_id == 1
+        assert assortment.short_info == "Perfect for couples"
+        assert assortment.is_hidden is False
+        assert assortment.pack_station == 1
+        assert assortment.thumb_hash == "thumb123"
+
+    def test_assortment_with_zero_item_count(self):
+        """Test Assortment with zero item count (not yet planned)."""
+
+        data = [
+            2,
+            "Veggie Box",
+            "Description",
+            4,
+            29.99,
+            0,  # not resolved
+            "",
+            "2024-01-01T00:00:00",
+            "2024-12-31T23:59:59",
+            0,  # Zero item count - not yet planned
+            10,
+            1,
+            "Short info",
+            0,
+            2,
+            "",
+        ]
+
+        assortment = Assortment.from_data_list_entry(data)
+
+        assert assortment.id == 2
+        assert assortment.resolved == 0
+        assert assortment.item_count == 0  # Should be 0, not None
+
+
+class TestCartItemModel:
+    """Test the updated CartItem model from the last commit."""
+
+    def test_cartitem_with_new_fields(self):
+        """Test CartItem with updated field names (quantity -> amount, added unit and note)."""
+
+        data = [
+            1,  # item_id
+            2.5,  # amount (was quantity before)
+            "kg",  # unit (new field)
+            "Please select ripe ones",  # note (new field)
+        ]
+
+        cart_item = CartItem.from_data_list_entry(data)
+
+        assert cart_item.item_id == 1
+        assert cart_item.amount == 2.5
+        assert cart_item.unit == "kg"
+        assert cart_item.note == "Please select ripe ones"
+
+    def test_cartitem_minimal_data(self):
+        """Test CartItem with minimal data."""
+
+        data = [1, 1.0]  # Just item_id and amount
+
+        cart_item = CartItem.from_data_list_entry(data)
+
+        assert cart_item.item_id == 1
+        assert cart_item.amount == 1.0
+        assert cart_item.unit is None
+        assert cart_item.note is None

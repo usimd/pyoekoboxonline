@@ -60,8 +60,8 @@ class DataListModel:
 
             value = data[index]
 
-            # Skip empty/null values, but allow 0 for id fields
-            if value is None or value == "" or (value == 0 and field_name != "id"):
+            # Skip empty/null values
+            if value is None or value == "":
                 kwargs[field_name] = None
                 continue
 
@@ -646,15 +646,89 @@ class Assorted(DataListModel):
 @dataclass
 class Assortment(DataListModel):
     """
-    Assortment object representing product assortments.
+    Describes one assortment.
+
+    An assortment is a collection of items that make up e.g. a recipe. Or a fruit-box with a certain amount of fruits, but the exact fruits and their amount is or is not not yet specified.
+
+    This object describes the base properties of such an assortment without its content (if its defined). Its content can be obtained using the API.methods.assortment call.
     """
 
-    id: int | None = field(
-        default=None, metadata={"description": "Assortment identifier"}
+    id: int | None = field(default=None, metadata={"description": "Assortment id"})
+    name: str | None = field(
+        default=None,
+        metadata={"description": "Name of this assortment, possibly localized"},
     )
-    name: str | None = field(default=None, metadata={"description": "Assortment name"})
     description: str | None = field(
-        default=None, metadata={"description": "Assortment description"}
+        default=None, metadata={"description": "The localized (long) description"}
+    )
+    person_count: int | None = field(
+        default=None,
+        metadata={
+            "description": "The intended number of persons to consume this assortment"
+        },
+    )
+    price: float | None = field(
+        default=None, metadata={"description": "Price of that assortment"}
+    )
+    resolved: int | None = field(
+        default=None,
+        metadata={
+            "description": 'If this field is "1", the assortment was already resolved to individual items. This means, if part of an order, this assortment will not be listed there anymore, but its individual items. AKA "Planned"'
+        },
+    )
+    picture_url: str | None = field(
+        default=None,
+        metadata={
+            "description": "if given, it represents a hash of an backend image (since V6, before always 1 if an image exists)"
+        },
+    )
+    valid_from: datetime.datetime | None = field(
+        default=None,
+        metadata={
+            "description": 'Start of the validity time frame (a date in JSON-ISO8601 Format, since version 3). May be "0", is there is no information or if not yet planned (aka "resolved").'
+        },
+    )
+    valid_to: datetime.datetime | None = field(
+        default=None,
+        metadata={
+            "description": 'End of validity time frame (a date in JSON-ISO8601 Format, since version 3). May be "0", is there is no information or if not yet planned (aka "resolved").'
+        },
+    )
+    item_count: int | None = field(
+        default=None,
+        metadata={
+            "description": "Number of Items in this assortment. May be 0 if the assortment is not yet planned in detail. (Since V4)"
+        },
+    )
+    group_id: int | None = field(
+        default=None,
+        metadata={
+            "description": "reference to an API.objects.AssortmentGroup. Such a group might group Boxes by similar content or slogan (e.g. Mother-Child-Box or Office-Fruits)"
+        },
+    )
+    variant_id: int | None = field(
+        default=None,
+        metadata={
+            "description": "reference to a variant. A variant can further group boxes (e.g. by size: small/medium/big)"
+        },
+    )
+    short_info: str | None = field(
+        default=None, metadata={"description": "The localized (short) description"}
+    )
+    is_hidden: bool | None = field(
+        default=None, metadata={"description": "true or false. Dont offer if false."}
+    )
+    pack_station: int | None = field(
+        default=None,
+        metadata={
+            "description": "if > 0, defines the packing station, any minimum order value is calculated against"
+        },
+    )
+    thumb_hash: str | None = field(
+        default=None,
+        metadata={
+            "description": "if given, it represents a hash of an backend image (since V6, before always 1 if an image exists)"
+        },
     )
 
 
@@ -723,17 +797,29 @@ class Box(DataListModel):
 @dataclass
 class CartItem(DataListModel):
     """
-    Cart item object representing items in shopping cart.
+    An Item (to be) placed into current) Cart
     """
 
     item_id: int | None = field(
-        default=None, metadata={"description": "Reference to item in cart"}
+        default=None, metadata={"description": "The item this position refers to."}
     )
-    quantity: float | None = field(
-        default=None, metadata={"description": "Quantity of item in cart"}
+    amount: float | None = field(
+        default=None,
+        metadata={
+            "description": "The amount it item-suitable units (can be an alternative unit, see next field)"
+        },
     )
-    price: float | None = field(
-        default=None, metadata={"description": "Price of item in cart"}
+    unit: str | None = field(
+        default=None,
+        metadata={
+            "description": "the unit this position is measured in (can be a alternative unit for this item)"
+        },
+    )
+    note: str | None = field(
+        default=None,
+        metadata={
+            "description": "Note related to this position. Its source depends on the context (might be form the customer or the system)"
+        },
     )
 
 

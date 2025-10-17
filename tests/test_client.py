@@ -146,6 +146,30 @@ class TestOekoboxClient:
 
     @pytest.mark.asyncio
     @respx.mock
+    async def test_request_http_error_404(self):
+        """Test HTTP 404 error handling."""
+        respx.get("http://example.com/api/test").mock(
+            return_value=httpx.Response(404, text="Not Found")
+        )
+
+        async with OekoboxClient("test_shop", "user", "pass") as client:
+            with pytest.raises(OekoboxAPIError, match="HTTP 404: Not found"):
+                await client._request("GET", "http://example.com/api/test")
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_request_http_error_409(self):
+        """Test HTTP 409 error handling."""
+        respx.get("http://example.com/api/test").mock(
+            return_value=httpx.Response(409, text="Conflict")
+        )
+
+        async with OekoboxClient("test_shop", "user", "pass") as client:
+            with pytest.raises(OekoboxAPIError, match="HTTP 409: Conflict error"):
+                await client._request("GET", "http://example.com/api/test")
+
+    @pytest.mark.asyncio
+    @respx.mock
     async def test_request_http_error_500(self):
         """Test HTTP 500 error handling."""
         respx.get("http://example.com/api/test").mock(
@@ -661,3 +685,211 @@ class TestOekoboxClient:
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
             result = await client._api_request("test")
             assert result == mock_response
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_assortments(self):
+        """Test getting assortments."""
+        mock_response = [
+            {
+                "type": "Assortment",
+                "data": [
+                    [
+                        1,
+                        "Fruit Box Small",
+                        "A small box with seasonal fruits",
+                        2,
+                        15.99,
+                        1,
+                        "pic123",
+                        "2024-01-01T00:00:00",
+                        "2024-12-31T23:59:59",
+                        5,
+                        10,
+                        1,
+                        "Perfect for couples",
+                        0,
+                        1,
+                        "thumb123",
+                    ],
+                    [
+                        2,
+                        "Veggie Box Large",
+                        "A large box with seasonal vegetables",
+                        4,
+                        29.99,
+                        1,
+                        "pic456",
+                        "2024-01-01T00:00:00",
+                        "2024-12-31T23:59:59",
+                        10,
+                        10,
+                        2,
+                        "Great for families",
+                        0,
+                        2,
+                        "thumb456",
+                    ],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/assortments4").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            from pyoekoboxonline.models import Assortment
+
+            assortments = await client.get_assortments()
+            assert len(assortments) == 2
+            assert isinstance(assortments[0], Assortment)
+            assert assortments[0].id == 1
+            assert assortments[0].name == "Fruit Box Small"
+            assert assortments[0].person_count == 2
+            assert assortments[0].price == 15.99
+            assert assortments[0].item_count == 5
+            assert assortments[1].id == 2
+            assert assortments[1].name == "Veggie Box Large"
+            assert assortments[1].person_count == 4
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_search_with_fuzzy(self):
+        """Test search functionality with fuzzy parameter."""
+        mock_response = [
+            {
+                "type": "Item",
+                "data": [
+                    [1, "Apple Juice", 3.50, "bottle", "Organic apple juice", 2, 7.0],
+                    [2, "Appel Pie", 5.00, "piece", "Homemade apple pie", 3, 7.0],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/search").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            results = await client.search("apel", fuzzy=True)
+
+            # Verify the request was made with correct parameters
+            request = respx.calls.last.request
+            assert "q=apel" in str(request.url)
+            assert "fuzzy=2" in str(request.url)
+            assert "qe=1" in str(request.url)
+            assert "fields=3" in str(request.url)
+
+            assert len(results) == 2
+            assert isinstance(results[0], Item)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_search_with_limit(self):
+        """Test search functionality with limit parameter."""
+        mock_response = [
+            {
+                "type": "Item",
+                "data": [
+                    [1, "Apple Juice", 3.50, "bottle", "Organic apple juice", 2, 7.0],
+                    [0],
+                ],
+            }
+        ]
+
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/search").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            await client.search("apple", limit=5)
+
+            # Verify the max parameter was used instead of limit
+            request = respx.calls.last.request
+            assert "max=5" in str(request.url)
+            assert "limit" not in str(request.url).lower()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_add_pause_with_date_format(self):
+        """Test adding pause with proper date format parameter."""
+        import datetime
+
+        mock_response = [
+            {
+                "type": "ShopDate",
+                "data": [[1, "2024-01-15", 1, "Monday", 5], [0]],
+            },
+            {
+                "type": "Pause",
+                "data": [[1, "2024-02-01", "2024-02-07", 0], [0]],
+            },
+        ]
+
+        respx.post(
+            "https://oekobox-online.de/v3/shop/test_shop/api/client/addpause"
+        ).mock(return_value=httpx.Response(200, json=mock_response))
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            from_date = datetime.datetime(2024, 2, 1)
+            to_date = datetime.datetime(2024, 2, 7)
+
+            result = await client.add_pause(from_date, to_date, auto_cancel=True)
+
+            # Verify the request was made with correct parameters
+            request = respx.calls.last.request
+            body = request.content.decode()
+            assert "BusinessEntity.DATEFORMAT=iso8601d" in body
+            assert "von=2024-02-01" in body
+            assert "bis=2024-02-07" in body
+            assert "autocancel=1" in body
+
+            # Verify the response was parsed correctly
+            from pyoekoboxonline.models import Pause, ShopDate
+
+            shop_dates = [r for r in result if isinstance(r, ShopDate)]
+            pauses = [r for r in result if isinstance(r, Pause)]
+            assert len(shop_dates) == 1
+            assert len(pauses) == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_drop_pause(self):
+        """Test dropping/removing a pause."""
+        mock_response = [
+            {
+                "type": "ShopDate",
+                "data": [[1, "2024-01-15", 1, "Monday", 5], [0]],
+            },
+            {
+                "type": "Pause",
+                "data": [
+                    # Empty pause list after dropping
+                    [0]
+                ],
+            },
+        ]
+
+        respx.post(
+            "https://oekobox-online.de/v3/shop/test_shop/api/client/droppause"
+        ).mock(return_value=httpx.Response(200, json=mock_response))
+
+        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
+            result = await client.drop_pause(pause_id=123)
+
+            # Verify the request was made with correct parameter
+            request = respx.calls.last.request
+            body = request.content.decode()
+            assert "lpid=123" in body
+
+            # Verify the response was parsed correctly
+            from pyoekoboxonline.models import Pause, ShopDate
+
+            shop_dates = [r for r in result if isinstance(r, ShopDate)]
+            pauses = [r for r in result if isinstance(r, Pause)]
+            assert len(shop_dates) == 1
+            # Pauses list should be empty after dropping
+            assert len(pauses) == 0
