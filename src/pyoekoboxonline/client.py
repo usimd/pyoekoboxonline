@@ -16,8 +16,10 @@ from .exceptions import (
 from .models import (
     Address,
     Assortment,
+    AssortmentGroup,
     AuxDate,
     Box,
+    CartItem,
     DDate,
     Delivery,
     DeliveryState,
@@ -29,6 +31,7 @@ from .models import (
     Item,
     Order,
     Pause,
+    Rubric,
     Shop,
     ShopDate,
     ShopUrl,
@@ -338,30 +341,25 @@ class OekoboxClient:
         return response
 
     # Core Data Methods
-    async def get_groups(self) -> list[Group]:
+    async def get_groups(
+        self,
+    ) -> list[Group | SubGroup | Rubric | Assortment | AssortmentGroup]:
         """
-        Get all product groups/categories.
+        All Items are assigned to one category (Beside that, they may be listed in alternative categories, called Rubrics).
+
+        "Group" and "Category" are used synonymous.
+
+        Categories (aka "groups) may have SubCategories ("SubGroups") to allow a one-level category hierarchy.
+
+        (Rubrics offer additional sorting folders for items.)
+
+        Group Information is inherently public, so there will likely always a response. Nevertheless, if authenticated, this list represents that data for the user that authenticated. Therefore, no generic authentication for a external application (Operator-Authentication) should be used.
+        See navigation if you look for a complete tree, not only the categories, but also the items mapping.
 
         Returns:
             List of Group objects
         """
-        response = await self._api_request("groups")
-        return response  # type: ignore[no-any-return]
-
-    async def get_subgroups(self, group_id: int | None = None) -> list[SubGroup]:
-        """
-        Get subgroups, optionally filtered by parent group.
-
-        Args:
-            group_id: Optional parent group ID to filter by
-
-        Returns:
-            List of SubGroup objects
-        """
-        params = {}
-        if group_id is not None:
-            params["g"] = str(group_id)
-        response = await self._api_request("subgroup", params=params)
+        response = await self._api_request("groups4")
         return response  # type: ignore[no-any-return]
 
     async def get_items(
@@ -372,9 +370,11 @@ class OekoboxClient:
         search: str | None = None,
         hidden: bool = False,
         timeless: bool = False,
-    ) -> list[Item]:
+    ) -> list[Item | XUnit]:
         """
-        Get items with optional filtering.
+        Similar to the group calls, but returns the item set for temporary offline storage.
+
+        It implies the all-option described in group.
 
         Args:
             group_id: Filter by group ID
@@ -404,18 +404,40 @@ class OekoboxClient:
         response = await self._api_request("items", params=params)
         return response  # type: ignore[no-any-return]
 
-    async def get_item(self, item_id: int) -> list[Item]:
+    async def get_item(
+        self, item_id: int, order_id: int | None = None, tour_id: int | None = None
+    ) -> Item:
         """
-        Get specific item by ID.
+        This call provides a single item. Alternatives are the itemlist or group calls.
+
+        This call does return a single item description, without related alternative units. Use one of the other methods to get also the alternative units.
+        Also, this call returns a "naked" (therefore small) item array, without a framing entity and version information. Use items1/i to get the full and complete response.
 
         Args:
             item_id: Item ID to retrieve
+            order_id: should be provided, to let the system identify the date for which the item info is requested. This is important, as item information might be date depended.
+            tour_id: Alternatively, a delivery date id can be provided here. Such an Id can be obtained from a API.methods.dates call.
 
         Returns:
-            List containing the Item object
+            If found the respective (partially populated) Item object
         """
-        response = await self._api_request(f"item/{item_id}")
-        return response  # type: ignore[no-any-return]
+        if order_id is not None and tour_id is not None:
+            raise OekoboxValidationError("Provide either order_id or tour_id, not both")
+
+        param_string = ""
+        if order_id is not None:
+            param_string += f"&oid={order_id}"
+        elif tour_id is not None:
+            param_string += f"&tourid={tour_id}"
+
+        response = await self._request(
+            "GET", f"{self.api_base_url}/item/{item_id}{param_string}"
+        )
+
+        if isinstance(response, list):
+            return parse_data_list_response([{"type": "Item", "data": [response]}])[0]  # type: ignore[no-any-return]
+
+        raise OekoboxValidationError("Expected list response from item endpoint")
 
     async def get_itemlist(
         self,
@@ -430,9 +452,11 @@ class OekoboxClient:
 
         Args:
             item_ids: List of item IDs to retrieve
+            tour_id: Alternatively to oid, a delivery date id can be provided here. Such an Id can be obtained from a API.methods.dates call.
+            order_id: should be provided, to let the system identify the date for which the item info is requested. This is important, as item information might be date dependent. Otherwise the attributes valid at the time of calling are relevant.
 
         Returns:
-            List of Item objects
+            A response references Item Objects and additional Alternative Units, should they be used.
         """
         ids_param = ",".join(map(str, item_ids))
         params: dict[str, Any] = {"i": ids_param}
@@ -746,6 +770,28 @@ class OekoboxClient:
             assortments Objects.
         """
         return await self._api_request("assortments4")  # type: ignore[no-any-return]
+
+    async def get_assortment(self, assortment_id: int) -> list[Item | XUnit | CartItem]:
+        """
+        Provides the Details of one assortment.
+
+        The list of all available assortments can be obtained here. It references Items, their alternative units and CartItem objects, telling the amount of each of the ingredient.
+
+        Note that own properties of an Assortment are not included here and can be obtained using the assortments call.
+
+        assortment1, 19.1.14: Content-Type change of response to be "application/json"
+        assortment2, Oct 15: Item Object are returned in Item V2 Format
+        assortment3, Apr 16: Item Object are returned in Item V5 Format
+        assortment4, Jul 18: Item Object are returned in Item V8 Format
+        ... assortment10, 10/24: Updated Object versions
+
+        Args:
+            assortment_id: The assortment id to be retrieved
+
+        Returns:
+            List of Item, XUnit, and CartItem objects
+        """
+        return await self._api_request(f"assortment10/{assortment_id}")  # type: ignore[no-any-return]
 
     async def set_tour(self, tour_id: int) -> dict[str, Any]:
         """

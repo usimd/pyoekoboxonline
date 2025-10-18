@@ -18,7 +18,6 @@ from pyoekoboxonline.models import (
     Item,
     Order,
     ShopUrl,
-    SubGroup,
     Tour,
     UserInfo,
     XUnit,
@@ -257,7 +256,7 @@ class TestOekoboxClient:
             }
         ]
 
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/groups").mock(
+        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/groups4").mock(
             return_value=httpx.Response(200, json=mock_response)
         )
 
@@ -269,33 +268,6 @@ class TestOekoboxClient:
             assert groups[0].name == "Fruits"
             assert groups[0].infotext == "Fresh fruits"
             assert groups[0].count == 25
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_get_subgroups(self):
-        """Test getting product subgroups."""
-        mock_response = [
-            {
-                "type": "SubGroup",
-                "data": [
-                    [1, "Apples", 1],
-                    [2, "Bananas", 1],
-                    [0],  # Terminating entry
-                ],
-            },
-        ]
-
-        respx.get("https://oekobox-online.de/v3/shop/test_shop/api/subgroup").mock(
-            return_value=httpx.Response(200, json=mock_response)
-        )
-
-        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            subgroups = await client.get_subgroups()
-            assert len(subgroups) == 2
-            assert isinstance(subgroups[0], SubGroup)
-            assert subgroups[0].id == 1
-            assert subgroups[0].name == "Apples"
-            assert subgroups[0].parent_group_id == 1
 
     @pytest.mark.asyncio
     @respx.mock
@@ -329,26 +301,20 @@ class TestOekoboxClient:
     @respx.mock
     async def test_get_item(self):
         """Test getting a specific item."""
-        mock_response = [
-            {
-                "type": "Item",
-                "data": [
-                    [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0],
-                    [0],  # Terminating entry
-                ],
-            }
-        ]
+        # get_item expects a raw list response (not wrapped in DataList format)
+        mock_response = [1, "Apple", 2.50, "kg", "Fresh red apples", 1, 7.0]
 
         respx.get("https://oekobox-online.de/v3/shop/test_shop/api/item/1").mock(
             return_value=httpx.Response(200, json=mock_response)
         )
 
         async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            items = await client.get_item(1)
-            assert len(items) == 1
-            assert isinstance(items[0], Item)
-            assert items[0].id == 1
-            assert items[0].name == "Apple"
+            item = await client.get_item(1)
+            assert isinstance(item, Item)
+            assert item.id == 1
+            assert item.name == "Apple"
+            assert item.price == 2.50
+            assert item.unit == "kg"
 
     @pytest.mark.asyncio
     @respx.mock

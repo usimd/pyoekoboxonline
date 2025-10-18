@@ -625,7 +625,13 @@ class Order(DataListModel):
 @dataclass
 class Assorted(DataListModel):
     """
-    Assorted items object.
+    A order position that defines an Assortment.
+
+    A Assortment groups some items that typically are delivered together (aka Ökobox, Biobox, Abobox)
+
+    See also See also API.methods.order, API.objects.Order
+
+    While the Id references a Assortment, the assortment call provides all details of the contained items.
     """
 
     id: int | None = field(
@@ -735,17 +741,41 @@ class Assortment(DataListModel):
 @dataclass
 class AssortmentGroup(DataListModel):
     """
-    Assortment group object.
+    Describes one assortment group.
+
+    Assortments can be grouped in various ways (by Topic or by Size). If an assortment is part of a group, the web shop might decide to show the description of that group instead of the individual descriptions.
     """
 
-    id: int | None = field(
-        default=None, metadata={"description": "Assortment group identifier"}
-    )
+    id: int | None = field(default=None, metadata={"description": "Assortment Id"})
     name: str | None = field(
-        default=None, metadata={"description": "Assortment group name"}
+        default=None,
+        metadata={"description": "Name of this assortment, possibly localized"},
     )
-    assortment_id: int | None = field(
-        default=None, metadata={"description": "Reference to parent assortment"}
+    description: str | None = field(
+        default=None, metadata={"description": "The localized (short) description"}
+    )
+    count: int | None = field(
+        default=None, metadata={"description": "number of assortments in this group"}
+    )
+    type: int | None = field(
+        default=None,
+        metadata={
+            "description": 'type or grouping: 0: group ("roots") 1:variant ("small"), 2: Container ("Boxes with greens")'
+        },
+    )
+    has_image: bool | None = field(
+        default=None,
+        metadata={"description": "1 if there is a image assigned to this Group"},
+    )
+    has_thumb: bool | None = field(
+        default=None, metadata={"description": "if a thumbnail exists"}
+    )
+    search: str | None = field(default=None, metadata={"description": "searchterms"})
+    hidden: bool | None = field(
+        default=None,
+        metadata={
+            "description": "1 if effectively hidden (because all content is hidden)"
+        },
     )
 
 
@@ -755,11 +785,21 @@ class AssortmentPosition(DataListModel):
     Provides an Mapping between the API.objects.Assortment and the API.objects.Item and is very similar to API.objects.CartItem.
     """
 
-    item_id: int | None = field(
-        default=None, metadata={"description": "Reference to item in this position"}
-    )
     assortment_id: int | None = field(
-        default=None, metadata={"description": "Reference to parent assortment"}
+        default=None, metadata={"description": "the reference to the assortment"}
+    )
+    item_id: int | None = field(
+        default=None, metadata={"description": "the reference to the item"}
+    )
+    amount: float | None = field(
+        default=None, metadata={"description": "amount in units"}
+    )
+    unit: str | None = field(default=None, metadata={"description": "clear-text unit"})
+    discount: float | None = field(
+        default=None,
+        metadata={
+            "description": "discount that may apply to this item within an assortment in percentage (-x% means a discount of x)."
+        },
     )
 
 
@@ -2050,6 +2090,48 @@ class Shop(DataListModel):
     id: str | None = field(default=None, metadata={"description": "Shop identifier"})
 
 
+@dataclass
+class Rubric(DataListModel):
+    """
+    Items naturally belong into exactly one category. Besides that, they can be ordered into one or many additional Rubric's. There is a API.objects.RubricMap Object that connects them.
+
+    There are also API.objects.SubGroup's to present items.
+
+    See also API.methods.groups, API.methods.navigation, API.objects.Item, Group
+    """
+
+    id: int = field(
+        default=0, metadata={"description": "The internal ID of this category."}
+    )
+    name: str | None = field(
+        default=None, metadata={"description": "The (localized) name of this category."}
+    )
+    infotext: str | None = field(
+        default=None,
+        metadata={"description": "The (localized) description text of this category."},
+    )
+    count: int = field(
+        default=0,
+        metadata={
+            "description": "The number of Items in that category. This number is dependent on the executing user and the timing constraints of the items."
+        },
+    )
+    is_special: int = field(
+        default=0,
+        metadata={"description": "If the rubric is marked special"},
+    )
+    has_img: int = field(
+        default=0,
+        metadata={"description": "1 if the group has an big image assigned (Since V2)"},
+    )
+    has_tn: int = field(
+        default=0,
+        metadata={
+            "description": "1 if the group has an small (icon-) image assigned (Since V2)"
+        },
+    )
+
+
 # Model registry for dynamic model creation
 MODEL_REGISTRY = {
     "Address": Address,
@@ -2076,6 +2158,7 @@ MODEL_REGISTRY = {
     "PermanentPosition": PermanentPosition,
     "Position": Position,
     "RelatedItem": RelatedItem,
+    "Rubric": Rubric,
     "Shop": Shop,
     "ShopDate": ShopDate,
     "ShopUrl": ShopUrl,
