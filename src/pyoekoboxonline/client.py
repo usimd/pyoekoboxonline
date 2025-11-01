@@ -1159,19 +1159,42 @@ class OekoboxClient:
         return response  # type: ignore[no-any-return]
 
     # Shop Information Methods
-    async def get_shop_info(self) -> list[Shop]:
+    @staticmethod
+    async def get_shop_info(timeout: float = 30.0) -> list[Shop]:
         """
         Get shop information and configuration.
 
+        This is a static method that can be called without authentication.
+        Use this to discover available shops before creating a client instance.
+
+        Args:
+            timeout: Request timeout in seconds (default: 30)
+
         Returns:
-            List containing Shop object
+            List containing Shop objects
+
+        Example:
+            ```python
+            import asyncio
+            from pyoekoboxonline import OekoboxClient
+
+            async def main():
+                # Get list of shops without authentication
+                shops = await OekoboxClient.get_shop_info()
+                for shop in shops:
+                    print(f"{shop.name} ({shop.id})")
+
+            asyncio.run(main())
+            ```
         """
         # The shop info endpoint is not part of the standard API, so we fetch it directly.
         # Its response needs to be wrapped in a DataList format to handle it similar to
         # the other models.
-        response_data = await self._request(
-            "GET", "https://oekobox-online.eu/v3/shoplist.js.jsp"
-        )
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+            response = await client.get("https://oekobox-online.eu/v3/shoplist.js.jsp")
+            response.raise_for_status()
+            response_data = response.json()
+
         return parse_data_list_response(
             [
                 {
@@ -1182,22 +1205,45 @@ class OekoboxClient:
         )
 
     # Utility Methods
-    async def find_shop(self, lat: float, lng: float) -> list[ShopUrl]:
+    @staticmethod
+    async def find_shop(lat: float, lng: float, timeout: float = 30.0) -> list[ShopUrl]:
         """
         Find shops by location.
 
+        This is a static method that can be called without authentication.
+        Use this to discover shops near a specific location before creating a client instance.
+
         Args:
-            lat: lat/lng are latitude/longitide parameters in the common wds84 decimal format
-            lng: lat/lng are latitude/longitide parameters in the common wds84 decimal format
+            lat: Latitude parameter in the common WGS84 decimal format
+            lng: Longitude parameter in the common WGS84 decimal format
+            timeout: Request timeout in seconds (default: 30)
 
         Returns:
-            List of Shop objects
+            List of ShopUrl objects
+
+        Example:
+            ```python
+            import asyncio
+            from pyoekoboxonline import OekoboxClient
+
+            async def main():
+                # Find shops near Berlin
+                shops = await OekoboxClient.find_shop(52.5200, 13.4050)
+                for shop in shops:
+                    print(f"{shop.display_name} - {shop.sysname}")
+
+            asyncio.run(main())
+            ```
         """
         params = {"lat": str(lat), "lng": str(lng)}
-        response = await self._request(
-            "GET", "https://oekobox-online.de/v3/findshop", params=params
-        )
-        return parse_data_list_response(response)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+            response = await client.get(
+                "https://oekobox-online.de/v3/findshop", params=params
+            )
+            response.raise_for_status()
+            response_data = response.json()
+
+        return parse_data_list_response(response_data)
 
     # Start method - combines authentication with data fetching
     async def start(

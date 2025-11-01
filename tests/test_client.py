@@ -17,6 +17,7 @@ from pyoekoboxonline.models import (
     Group,
     Item,
     Order,
+    Shop,
     ShopUrl,
     Tour,
     UserInfo,
@@ -604,14 +605,60 @@ class TestOekoboxClient:
             return_value=httpx.Response(200, json=mock_response)
         )
 
-        async with OekoboxClient("test_shop", "testuser", "testpass") as client:
-            shops = await client.find_shop(52.5, 13.4)
-            assert len(shops) == 2
-            assert isinstance(shops[0], ShopUrl)
-            assert shops[0].lat == 52.530008
-            assert shops[0].lng == 13.414954
-            assert shops[0].display_name == "Organic Market Berlin"
-            assert shops[0].sysname == "berlin"
+        # Call as static method without creating a client instance
+        shops = await OekoboxClient.find_shop(52.5, 13.4)
+        assert len(shops) == 2
+        assert isinstance(shops[0], ShopUrl)
+        assert shops[0].lat == 52.530008
+        assert shops[0].lng == 13.414954
+        assert shops[0].display_name == "Organic Market Berlin"
+        assert shops[0].sysname == "berlin"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_shop_info(self):
+        """Test getting shop information as static method."""
+        mock_response = [
+            [
+                "test_shop",
+                "Test Shop",
+                "A test shop",
+                "https://example.com",
+                "test@example.com",
+                "123-456-7890",
+                "Test Address",
+                "Berlin",
+                "10115",
+                "Germany",
+                52.5200,
+                13.4050,
+                1,
+            ],
+            [
+                "another_shop",
+                "Another Shop",
+                "Another test shop",
+                "https://example2.com",
+                "test2@example.com",
+                "987-654-3210",
+                "Another Address",
+                "Munich",
+                "80331",
+                "Germany",
+                48.1351,
+                11.5820,
+                1,
+            ],
+        ]
+
+        respx.get("https://oekobox-online.eu/v3/shoplist.js.jsp").mock(
+            return_value=httpx.Response(200, json=mock_response)
+        )
+
+        # Call as static method without creating a client instance
+        shops = await OekoboxClient.get_shop_info()
+        assert len(shops) == 2
+        assert isinstance(shops[0], Shop)
 
     @pytest.mark.asyncio
     @respx.mock
