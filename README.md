@@ -1,13 +1,18 @@
+[![codecov](https://codecov.io/gh/usimd/pyoekoboxonline/graph/badge.svg?token=VDG1IFFZSL)](https://codecov.io/gh/usimd/pyoekoboxonline)
+[![PyPI](https://img.shields.io/pypi/v/pyoekoboxonline.svg)](https://pypi.org/project/pyoekoboxonline/)
+[![Python Version](https://img.shields.io/pypi/pyversions/pyoekoboxonline.svg)](https://pypi.org/project/pyoekoboxonline/)
+[![License](https://img.shields.io/pypi/l/pyoekoboxonline.svg)](https://pypi.org/project/pyoekoboxonline/)
 # Pyoekoboxonline
 
 A Python client library for the [Ökobox Online](https://oekobox-online.de) e-commerce REST API. This library provides an easy-to-use, async interface for interacting with organic food delivery and subscription services.
 
-> **Note**: This library is designed to be compatible with Home Assistant custom integrations.
+> **Note**: This library is designed to be compatible with Home Assistant custom integrations and uses `aiohttp` for HTTP requests.
 
 ## Requirements
 
 - **Python 3.11+** - Modern Python features and performance improvements
 - **Async/await support** - Built with modern Python async patterns
+- **aiohttp** - Modern async HTTP client library
 
 ## Features
 
@@ -16,6 +21,7 @@ A Python client library for the [Ökobox Online](https://oekobox-online.de) e-co
 - **Comprehensive error handling** - Detailed exception hierarchy
 - **Well tested** - High test coverage with pytest
 - **Production ready** - Follows Python packaging best practices
+- **External session support** - Compatible with Home Assistant's shared aiohttp session
 
 ## Installation
 
@@ -27,26 +33,25 @@ pip install pyoekoboxonline
 
 ## Quick Start
 
+### Standard Usage
+
 ```python
 import asyncio
 from pyoekoboxonline import OekoboxClient
 
 async def main():
     # First, discover available shops
-    shops = await OekoboxClient.get_available_shops()
+    shops = await OekoboxClient.get_shop_info()
     print(f"Found {len(shops)} shops")
 
     # Connect to a specific shop
-    client = OekoboxClient(
+    async with OekoboxClient(
         shop_id="your_shop_id",  # From shop list
         username="your-username",
         password="your-password"
-    )
-
-    async with client:
+    ) as client:
         # Login
-        user = await client.login()
-        print(f"Hello, {user.username}!")
+        await client.logon()
 
         # Browse product categories
         groups = await client.get_groups()
@@ -59,21 +64,53 @@ async def main():
             print(f"{item.name}: {item.price}")
 
         # Add items to cart
-        await client.add_to_cart("item_123", quantity=2.0)
+        await client.add_to_cart(item_id=123, amount=2.0)
 
         # View orders
         orders = await client.get_orders()
         for order in orders:
-            print(f"Order {order.id}: {order.total_amount}")
+            print(f"Order {order.id}")
+
+        # Logout
+        await client.logout()
 
 asyncio.run(main())
+```
+
+### Home Assistant Integration (External Session)
+
+For Home Assistant integrations, you can pass an external `aiohttp.ClientSession`:
+
+```python
+import aiohttp
+from pyoekoboxonline import OekoboxClient
+
+async def setup_platform(hash, config, async_add_entities, discovery_info=None):
+    """Set up the Ökobox Online integration."""
+
+    # Use Home Assistant's shared session
+    session = hash.helpers.aiohttp_client.async_get_clientsession()
+
+    # Create client with external session
+    client = OekoboxClient(
+        shop_id=config["shop_id"],
+        username=config["username"],
+        password=config["password"],
+        session=session,  # Pass the external session
+    )
+
+    # No need for context manager when using external session
+    await client.logon()
+
+    # Use the client...
+    # The session will be managed by Home Assistant
 ```
 
 ## API Reference
 
 ### Client
 
-#### `OekoboxClient(shop_id, username, password, base_url=None, timeout=30.0)`
+#### `OekoboxClient(shop_id, username, password, base_url=None, timeout=30.0, session=None)`
 
 The main client class for interacting with the Ökobox Online API.
 
@@ -82,7 +119,8 @@ The main client class for interacting with the Ökobox Online API.
 - `username` (str): Your account username
 - `password` (str): Your account password
 - `base_url` (str, optional): Custom base URL (auto-detected from shop_id)
-- `timeout` (float, optional): Request timeout in seconds
+- `timeout` (float, optional): Request timeout in seconds (default: 30.0)
+- `session` (aiohttp.ClientSession, optional): External aiohttp session (for Home Assistant integrations)
 
 ### Shop Discovery
 

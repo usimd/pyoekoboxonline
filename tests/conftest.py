@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
-import httpx
+import aiohttp
 import pytest
 
 from pyoekoboxonline import OekoboxClient
@@ -128,9 +128,9 @@ def mock_shop_list_js():
 
 
 @pytest.fixture
-def mock_httpx():
-    """Mock httpx client for testing."""
-    return AsyncMock(spec=httpx.AsyncClient)
+def mock_aiohttp():
+    """Mock aiohttp client for testing."""
+    return AsyncMock(spec=aiohttp.ClientSession)
 
 
 # Configure pytest-asyncio

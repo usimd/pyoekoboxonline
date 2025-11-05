@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Any, TypeVar
 
-import httpx
+import aiohttp
 
 from .exceptions import (
     OekoboxAPIError,
@@ -52,7 +52,8 @@ class OekoboxClient:
     """Async client for the Ökobox Online REST API.
 
     This client provides methods to interact with the Ökobox Online e-commerce
-    platform API for food delivery and subscription services.
+    platform API for food delivery and subscription services. Built on aiohttp
+    for modern async HTTP operations.
 
     Based on official API documentation from: https://oekobox-online.de/shopdocu/wiki/API
 
@@ -62,8 +63,9 @@ class OekoboxClient:
         password: Password for authentication
         base_url: Base URL of the shop (default: auto-detected from shop_id)
         timeout: Request timeout in seconds (default: 30)
+        session: Optional external aiohttp.ClientSession (for Home Assistant integrations)
 
-    Example:
+    Example - Standard usage with managed session:
         ```python
         import asyncio
         from pyoekoboxonline import OekoboxClient
@@ -81,6 +83,26 @@ class OekoboxClient:
 
         asyncio.run(main())
         ```
+
+    Example - Home Assistant integration with external session:
+        ```python
+        import aiohttp
+        from pyoekoboxonline import OekoboxClient
+
+        # In your Home Assistant integration
+        async def async_setup_entry(hash, entry):
+            session = async_get_clientsession(hash)
+
+            client = OekoboxClient(
+                shop_id=entry.data["shop_id"],
+                username=entry.data["username"],
+                password=entry.data["password"],
+                session=session,  # Use HA's shared session
+            )
+
+            await client.logon()
+            # Session is managed by Home Assistant
+        ```
     """
 
     def __init__(
@@ -90,8 +112,18 @@ class OekoboxClient:
         password: str,
         base_url: str | None = None,
         timeout: float = 30.0,
+        session: aiohttp.ClientSession | None = None,
     ) -> None:
-        """Initialize the Ökobox Online client."""
+        """Initialize the Ökobox Online client.
+
+        Args:
+            shop_id: Shop identifier from the shop list
+            username: Username/Customer ID for authentication
+            password: Password for authentication
+            base_url: Base URL of the shop (default: auto-detected from shop_id)
+            timeout: Request timeout in seconds (default: 30)
+            session: Optional external aiohttp.ClientSession to use (useful for Home Assistant integrations)
+        """
         self.shop_id = shop_id
         self.username = username
         self.password = password
@@ -104,8 +136,10 @@ class OekoboxClient:
         else:
             self.base_url = f"https://oekobox-online.de/v3/shop/{shop_id}"
 
-        # Initialize HTTP client
-        self._client: httpx.AsyncClient | None = None
+        # Store external session or prepare to create our own
+        self._external_session = session
+        self._client: aiohttp.ClientSession | None = session
+        self._owns_session = session is None
 
     @property
     def api_base_url(self) -> str:
@@ -114,21 +148,22 @@ class OekoboxClient:
 
     async def __aenter__(self) -> "OekoboxClient":
         """Async context manager entry."""
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout),
-            follow_redirects=True,
-        )
+        if self._owns_session:
+            # Create our own session with timeout
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+            self._client = aiohttp.ClientSession(timeout=timeout)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
-        if self._client:
-            await self._client.aclose()
+        # Only close session if we own it
+        if self._owns_session and self._client:
+            await self._client.close()
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client:
-            await self._client.aclose()
+        """Close the HTTP client (only if we own the session)."""
+        if self._owns_session and self._client:
+            await self._client.close()
 
     async def _request(
         self,
@@ -178,7 +213,7 @@ class OekoboxClient:
                     if hasattr(response, "cookies") and cookie_name in response.cookies:
                         cookie_value = response.cookies[cookie_name]
                         if cookie_value and not self.session_id:
-                            self.session_id = cookie_value
+                            self.session_id = cookie_value.value
                             logger.debug(
                                 f"Session ID extracted from {cookie_name}: {self.session_id[:10]}..."
                             )
@@ -197,57 +232,65 @@ class OekoboxClient:
                                 break
 
                 if self.session_id:
-                    self._client.cookies.update({"OOSESSION": self.session_id})
+                    self._client.cookie_jar.update_cookies(
+                        {"OOSESSION": self.session_id}
+                    )
 
             response.raise_for_status()
 
-        except httpx.HTTPStatusError as e:
-            server_error = e.response.headers.get("X-oekobox-error", None)
+        except aiohttp.ClientResponseError as e:
+            server_error = e.headers.get("X-oekobox-error", None) if e.headers else None
 
-            if e.response.status_code == 401:
+            if e.status == 401:
                 raise OekoboxAuthenticationError(
-                    f"HTTP {e.response.status_code}: Authentication failed",
+                    f"HTTP {e.status}: Authentication failed",
                     server_error,
-                    e.response.status_code,
+                    e.status,
                 ) from e
-            elif e.response.status_code == 403:
+            elif e.status == 403:
                 raise OekoboxAuthenticationError(
-                    f"HTTP {e.response.status_code}: Access forbidden",
+                    f"HTTP {e.status}: Access forbidden",
                     server_error,
-                    e.response.status_code,
+                    e.status,
                 ) from e
-            elif e.response.status_code == 404:
+            elif e.status == 404:
                 raise OekoboxAPIError(
-                    f"HTTP {e.response.status_code}: Not found",
+                    f"HTTP {e.status}: Not found",
                     server_error,
-                    e.response.status_code,
+                    e.status,
                 ) from e
-            elif e.response.status_code == 409:
+            elif e.status == 409:
                 raise OekoboxAPIError(
-                    f"HTTP {e.response.status_code}: Conflict error",
+                    f"HTTP {e.status}: Conflict error",
                     server_error,
-                    e.response.status_code,
+                    e.status,
                 ) from e
             else:
                 # Try to get error message from response
+                error_msg = e.message
                 try:
-                    error_data = e.response.json()
-                    error_msg = error_data.get("error", e.response.text)
-                except Exception:
-                    error_msg = e.response.text
+                    # aiohttp stores response text in the exception
+                    if hasattr(e, "history") and e.history:
+                        error_data = await e.history[-1].json()
+                        error_msg = error_data.get("error", e.message)
+                except Exception:  # nosec B110 - intentionally ignore errors when extracting additional error details
+                    # If we can't get more detailed error info, that's fine - we'll use the base message
+                    logger.debug(
+                        "Could not extract detailed error message from response"
+                    )
 
                 raise OekoboxAPIError(
-                    f"HTTP {e.response.status_code}: {error_msg}",
+                    f"HTTP {e.status}: {error_msg}",
                     server_error,
-                    e.response.status_code,
+                    e.status,
                 ) from e
 
-        except httpx.RequestError as e:
+        except (aiohttp.ClientError, aiohttp.ClientConnectionError) as e:
             raise OekoboxConnectionError(f"Request failed: {e}") from e
 
         # Parse JSON response
         try:
-            return response.json()
+            return await response.json(content_type=None)
         except Exception as e:
             raise OekoboxValidationError(f"Invalid JSON response: {e}") from e
 
@@ -1190,10 +1233,14 @@ class OekoboxClient:
         # The shop info endpoint is not part of the standard API, so we fetch it directly.
         # Its response needs to be wrapped in a DataList format to handle it similar to
         # the other models.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            response = await client.get("https://oekobox-online.eu/v3/shoplist.js.jsp")
+        async with (
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as client,
+            client.get("https://oekobox-online.eu/v3/shoplist.js.jsp") as response,
+        ):
             response.raise_for_status()
-            response_data = response.json()
+            response_data = await response.json()
 
         return parse_data_list_response(
             [
@@ -1236,12 +1283,16 @@ class OekoboxClient:
             ```
         """
         params = {"lat": str(lat), "lng": str(lng)}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            response = await client.get(
+        async with (
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as client,
+            client.get(
                 "https://oekobox-online.de/v3/findshop", params=params
-            )
+            ) as response,
+        ):
             response.raise_for_status()
-            response_data = response.json()
+            response_data = await response.json()
 
         return parse_data_list_response(response_data)
 
